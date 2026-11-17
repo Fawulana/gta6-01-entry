@@ -1,61 +1,61 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+// Solmar Bay: shared constants for the open-world crime game.
+// The city is a 3200 x 3200 grid of roads and blocks; every system reads these.
+export const WORLD_W = 3200;
+export const WORLD_H = 3200;
+export const ROAD_FIRST = 200;
+export const ROAD_SPACING = 400;
+export const ROAD_COUNT = 8; // roads at 200, 600, 1000, ..., 3000 on both axes
+export const ROAD_WIDTH = 76;
+export const STEP = 1 / 60; // fixed simulation step
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
+export const PLAYER_WALK = 175;
+export const PLAYER_RUN = 265;
+export const PLAYER_RADIUS = 14;
+export const PLAYER_HEALTH = 100;
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+export const CAR_ACCEL = 470;
+export const CAR_BRAKE = 750;
+export const CAR_MAX_SPEED = 560;
+export const CAR_MAX_REVERSE = 210;
+export const CAR_TURN_RATE = 2.7;
+export const CAR_LENGTH = 46;
+export const CAR_WIDTH = 22;
 
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
-};
+export const TRAFFIC_SPEED_MIN = 110;
+export const TRAFFIC_SPEED_MAX = 185;
+export const POLICE_SPEED = 595;
+export const MAX_WANTED = 5;
 
-export const LIVES = 3;
+export const CAR_COLORS = [
+  '#c0392b', '#2980b9', '#f39c12', '#27ae60', '#8e44ad',
+  '#e8e8e8', '#2c3e50', '#e67e22', '#16a085', '#d35400', '#f5d76e',
+];
+export const PED_SHIRTS = [
+  '#e74c3c', '#3498db', '#f1c40f', '#2ecc71',
+  '#9b59b6', '#e67e22', '#1abc9c', '#fd79a8', '#f5f5f5',
+];
+export const BUILDING_COLORS = [
+  '#f5e6c8', '#e8b4a0', '#c8d8e8', '#e8d8a0', '#d8c8b8',
+  '#f0c8d8', '#c8e0c8', '#e0d0f0', '#f8f0e0', '#d8b8a8',
+];
+export const ROOF_COLORS = ['#b5654a', '#7a6a5a', '#5a7a8a', '#8a5a4a', '#6a5a7a', '#a05a3a'];
 
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
-export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+/** Clamp a value into [lo, hi]. */
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+/** Shortest signed angle difference from a to b, in radians. */
+export function angleDiff(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+/** Distance between two points. */
+export function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+/** Deterministic 0..1 hash of two integers, for stable per-building detail. */
+export function hash2(x, y) {
+  let h = (x * 374761393 + y * 668265263) | 0;
+  h = (h ^ (h >> 13)) | 0;
+  h = Math.imul(h, 1274126177);
+  h = (h ^ (h >> 16)) >>> 0;
+  return h / 4294967295;
+}
