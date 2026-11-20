@@ -14,6 +14,32 @@ export function wantedCount(G) {
   return G.cars.filter((c) => c.police && !c.dead).length;
 }
 
+/** Two cruisers park sideways across the road ahead of the player and hold
+ * the line for a few seconds, then join the chase. */
+export function deployRoadblock(G) {
+  const p = G.player;
+  const ahead = 430;
+  const ax = p.x + Math.cos(p.angle) * ahead;
+  const ay = p.y + Math.sin(p.angle) * ahead;
+  const road = nearestRoad(G.city, ax, ay);
+  if (!road) return;
+  // Sideways across the road: perpendicular to the road's direction.
+  const sideAngle = road.axis === 'x' ? Math.PI / 2 : 0;
+  const offs = [-26, 26];
+  for (const off of offs) {
+    const x = road.axis === 'x' ? ax + off : road.line + off;
+    const y = road.axis === 'y' ? ay + off : road.line + off;
+    if (!isOnRoad(G.city, x, y)) continue;
+    const car = makeCar(x, y, sideAngle, '#1a1a1a', 'police');
+    car.police = true;
+    car.traffic = false;
+    car.cruise = POLICE_SPEED;
+    car.blockT = 3; // hold the line before joining the chase
+    G.cars.push(car);
+  }
+  G.toast('Roadblock ahead!');
+}
+
 /** Spawn one police car on a road just out of view of the player. */
 function spawnPolice(G) {
   const rng = G.rng;
@@ -49,8 +75,8 @@ export function updatePolice(G, dt) {
       G.wantedT = 0;
     }
   }
-  // Keep the number of pursuit cars matched to the wanted level.
-  const want = G.wanted === 0 ? 0 : Math.min(G.wanted + 1, 6);
+  // Keep the number of pursuit cars matched to the wanted level: up to 7.
+  const want = G.wanted === 0 ? 0 : Math.min(G.wanted + 2, 7);
   const have = wantedCount(G);
   if (have < want) spawnPolice(G);
   if (have > want) {
@@ -64,16 +90,32 @@ export function updatePolice(G, dt) {
     }
     if (far) far.dead = true;
   }
+  // Roadblocks at 3+ stars, at most one every 25 seconds.
+  if (G.wanted >= 3) {
+    G.roadblockCd -= dt;
+    if (G.roadblockCd <= 0) {
+      G.roadblockCd = 25;
+      deployRoadblock(G);
+    }
+  }
 
-  // Chase: steer toward the player, ram on contact.
+  // Chase: steer toward the player, ram on contact. Pursuit speed scales
+  // with the wanted level, so five stars is a much faster chase than one.
   for (const cop of G.cars) {
     if (!cop.police || cop.dead) continue;
+    // A roadblock car holds its line until its timer runs out.
+    if (cop.blockT > 0) {
+      cop.blockT -= dt;
+      cop.speed = 0;
+      continue;
+    }
     const dx = p.x - cop.x;
     const dy = p.y - cop.y;
     const d = Math.hypot(dx, dy) || 1;
     const target = Math.atan2(dy, dx);
     cop.angle += clamp(angleDiff(cop.angle, target), -3.2 * dt, 3.2 * dt);
-    const speedWant = d > 700 ? POLICE_SPEED : POLICE_SPEED * 0.92;
+    const chaseSpeed = POLICE_SPEED * (0.88 + 0.09 * G.wanted);
+    const speedWant = d > 700 ? chaseSpeed : chaseSpeed * 0.92;
     cop.speed += clamp(speedWant - cop.speed, -420 * dt, 380 * dt);
     moveCar(G, cop, dt);
     if (d < 60) {

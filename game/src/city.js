@@ -22,8 +22,14 @@ export function generateCity(seed) {
   const roadsY = roadLines();
   const buildings = [];
   const trees = [];
+  const palms = [];
   const parks = [];
   const half = ROAD_WIDTH / 2;
+
+  // Palm-lined beach: a row of palms along the sand above the water.
+  for (let x = 140; x < WORLD_W - 60; x += 170) {
+    palms.push({ x: x + rng.range(-30, 30), y: rng.range(2970, 3050), r: rng.range(10, 14) });
+  }
 
   // One block per cell between neighbouring roads.
   for (let ix = 0; ix < ROAD_COUNT - 1; ix += 1) {
@@ -55,11 +61,13 @@ export function generateCity(seed) {
         const bh = rng.range(90, 180);
         const bx = rng.range(x0, Math.max(x0 + 1, x1 - bw));
         const by = rng.range(y0, Math.max(y0 + 1, y1 - bh));
+        // Downtown blocks grow towers far more often than the suburbs.
+        const downtown = bx >= 1400 && bx <= 2200 && by >= 1400 && by <= 2200;
         buildings.push({
           x: bx, y: by, w: bw, h: bh,
           color: rng.pick(BUILDING_COLORS),
           roof: rng.pick(ROOF_COLORS),
-          tall: rng.chance(0.25),
+          tall: rng.chance(downtown ? 0.6 : 0.25),
         });
       }
       if (rng.chance(0.5)) {
@@ -76,8 +84,10 @@ export function generateCity(seed) {
     warehouse: { x: 2600, y: 1400, label: 'Old Warehouse' },
     hospital: { x: 1000, y: 2600, label: 'Solmar General' },
     dealership: { x: 1800, y: 2200, label: 'Auto Row' },
+    oceanDrive: { x: 1400, y: 3000, label: 'Ocean Drive' },
+    pier: { x: 2200, y: 3080, label: 'Solmar Pier' },
   };
-  return { roadsX, roadsY, buildings, trees, parks, markers, seed };
+  return { roadsX, roadsY, buildings, trees, palms, parks, markers, seed };
 }
 
 /** True when the point is on asphalt (a road, either axis). */

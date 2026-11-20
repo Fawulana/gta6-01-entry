@@ -25,6 +25,7 @@ import { seedPeds, updatePeds } from './traffic.js';
 import { addWanted, updatePolice } from './police.js';
 import { playerShoot, updateCombat } from './combat.js';
 import { missionObjective, startMission, updateMissions } from './missions.js';
+import { seedStashes, updateStashes } from './activities.js';
 import {
   SCREEN_BUSTED, SCREEN_HELP, SCREEN_MISSION, SCREEN_PAUSED, SCREEN_PLAY,
   SCREEN_TITLE, SCREEN_WASTED, createRenderer,
@@ -60,6 +61,8 @@ export function createGame(gameSeed) {
     toasts: [], events: [],
     wanted: 0, wantedT: 0, lastCrimeT: -100, bustedT: 0, missionHeat: false,
     mission: null, missionsDone: 0, storyDone: false,
+    stashes: [], stashesFound: 0,
+    skidMarks: [], skidT: 0, smokeT: 0, roadblockCd: 10,
     camera: { x: safe.x, y: safe.y },
     view: { vx: 0, vy: 0, cw: 1280, ch: 720 },
     sirenOn: false, dusk: false, hasSave: hasSave(),
@@ -76,6 +79,7 @@ export function createGame(gameSeed) {
   for (let i = 0; i < 10; i += 1) spawnTrafficCar(G, 1800, 1800);
   seedPeds(G, 1800, 1800, 24);
   scatterCash(G, 5);
+  seedStashes(G);
   return G;
 }
 
@@ -157,7 +161,25 @@ function updatePlayerInCar(G, dt) {
   p.x = car.x;
   p.y = car.y;
   p.angle = car.angle;
-  if (G.input.isDown('Space')) car.speed -= car.speed * 3.2 * dt; // handbrake
+  if (G.input.isDown('Space')) {
+    car.speed -= car.speed * 3.2 * dt; // handbrake
+    // Handbraking at speed leaves skid marks on the asphalt.
+    if (Math.abs(car.speed) > 200) {
+      G.skidT -= dt;
+      if (G.skidT <= 0) {
+        G.skidT = 0.07;
+        const side = Math.PI / 2;
+        for (const s of [-1, 1]) {
+          G.skidMarks.push({
+            x: car.x - Math.cos(car.angle) * 18 + Math.cos(car.angle + side) * 9 * s,
+            y: car.y - Math.sin(car.angle) * 18 + Math.sin(car.angle + side) * 9 * s,
+            angle: car.angle, life: 6,
+          });
+        }
+        if (G.skidMarks.length > 220) G.skidMarks.splice(0, G.skidMarks.length - 220);
+      }
+    }
+  }
   drivePlayerCar(G, car, dt);
   if (G.input.wasPressed('KeyE')) {
     // Step out beside the car.
@@ -180,7 +202,8 @@ function collectPickups(G) {
       p.cash += pk.value;
       playPickup();
       toast(G, `+$${pk.value} cash`);
-      if (G.mission && G.mission.index === 2 && G.mission.step === 'collect') G.scoreGot = true;
+      // The Score and the Takeover both end by grabbing the cash.
+      if (G.mission && (G.mission.index === 2 || G.mission.index === 5) && G.mission.step === 'collect') G.scoreGot = true;
     } else if (pk.kind === 'package') {
       G.packageGot = true;
       playPickup();
@@ -321,6 +344,22 @@ export function stepGame(G, dt) {
   updateCombat(G, dt);
   updateMissions(G, dt);
   collectPickups(G);
+  updateStashes(G);
+  // Skid marks fade; a damaged car (under 50 HP) trails smoke.
+  for (const s of G.skidMarks) s.life -= dt;
+  G.skidMarks = G.skidMarks.filter((s) => s.life > 0);
+  if (p.inCar && p.inCar.health < 50 && !p.inCar.dead) {
+    G.smokeT -= dt;
+    if (G.smokeT <= 0) {
+      G.smokeT = 0.18;
+      G.particles.push({
+        x: p.inCar.x - Math.cos(p.inCar.angle) * 20 + G.rng.range(-6, 6),
+        y: p.inCar.y - Math.sin(p.inCar.angle) * 20 + G.rng.range(-6, 6),
+        vx: G.rng.range(-12, 12), vy: G.rng.range(-30, -8),
+        life: 0.9, maxLife: 0.9, color: '#888', size: G.rng.range(4, 8),
+      });
+    }
+  }
   // Cash pickups respawn over time.
   G.pickupTimer -= dt;
   if (G.pickupTimer <= 0) {
@@ -404,6 +443,11 @@ function runGame() {
     G.player.y = data.y;
     G.missionsDone = data.missionsDone || 0;
     G.storyDone = !!data.storyDone;
+    G.stashesFound = data.stashesFound || 0;
+    // Found chests stay found across sessions: mark the first N as collected.
+    for (let i = 0; i < Math.min(G.stashesFound, G.stashes.length); i += 1) {
+      G.stashes[i].found = true;
+    }
     G.camera.x = data.x;
     G.camera.y = data.y;
     G.screen = SCREEN_PLAY;
@@ -446,6 +490,14 @@ function runGame() {
       if (G.input.wasPressed('KeyP') || G.input.wasPressed('Escape')) {
         G.screen = SCREEN_PAUSED;
         announce('Paused.');
+      } else if (G.input.wasRestartPressed() && G.mission) {
+        // R restarts the current mission (or race) from the top.
+        const idx = G.mission.index;
+        G.enemies.length = 0;
+        G.bullets.length = 0;
+        G.wanted = 0;
+        startMission(G, idx);
+        toast(G, 'Mission restarted.');
       } else if (G.input.wasPressed('KeyM')) {
         muted = !muted;
         setMuted(muted);

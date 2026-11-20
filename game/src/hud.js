@@ -3,6 +3,7 @@
 import { MAX_WANTED, ROAD_COUNT, ROAD_FIRST, ROAD_SPACING, WORLD_H, WORLD_W, clamp } from './config.js';
 import { districtAt } from './city.js';
 import { missionObjective } from './missions.js';
+import { STASH_COUNT } from './activities.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MAP_SIZE = 190;
@@ -62,6 +63,26 @@ function drawMinimap(ctx, G, cw) {
     ctx.closePath();
     ctx.fill();
   }
+  // Hidden stash chests: gold blips until they are found.
+  ctx.fillStyle = '#ffd60a';
+  for (const st of G.stashes || []) {
+    if (st.found) continue;
+    ctx.fillRect(x0 + st.x * s - 2, y0 + st.y * s - 2, 4, 4);
+  }
+  // Race checkpoints: the next one shows as a white diamond.
+  if (m && m.index === 3 && m.checkpoints) {
+    const cp = m.checkpoints[m.raceCp];
+    if (cp) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(x0 + cp[0] * s, y0 + cp[1] * s - 5);
+      ctx.lineTo(x0 + cp[0] * s + 5, y0 + cp[1] * s);
+      ctx.lineTo(x0 + cp[0] * s, y0 + cp[1] * s + 5);
+      ctx.lineTo(x0 + cp[0] * s - 5, y0 + cp[1] * s);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
   // Police blips, then the player arrow.
   ctx.fillStyle = '#ff3b30';
   for (const car of G.cars) {
@@ -88,6 +109,14 @@ function drawMinimap(ctx, G, cw) {
 
 export function drawHUD(ctx, G, cw, ch) {
   const p = G.player;
+  // Red flash across the screen at 4-5 stars: the whole city is after you.
+  if (G.wanted >= 4 && Math.floor(G.time * 2) % 2 === 0) {
+    ctx.fillStyle = 'rgba(255,40,40,0.08)';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.strokeStyle = 'rgba(255,40,40,0.55)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2, 2, cw - 4, ch - 4);
+  }
   // Cash and health, top left.
   ctx.fillStyle = 'rgba(10,14,20,0.6)';
   ctx.fillRect(12, 12, 210, 64);
@@ -100,6 +129,8 @@ export function drawHUD(ctx, G, cw, ch) {
   ctx.fillRect(130, 52, 80 * clamp(p.health / 100, 0, 1), 12);
   // Wanted stars under the cash.
   drawStars(ctx, G, 22, 84);
+  // Hidden stash counter under the stars.
+  text(ctx, `Stashes ${G.stashesFound || 0}/${STASH_COUNT}`, 22, 116, 13, '#ffd60a', 'left', 'bold');
   // Mission objective, top centre.
   const obj = missionObjective(G);
   ctx.font = 'bold 17px ' + FONT;
@@ -110,6 +141,18 @@ export function drawHUD(ctx, G, cw, ch) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText(obj, cw / 2, 20);
+  // Race clock bar under the objective while the street race runs.
+  const m = G.mission;
+  if (m && m.index === 3 && typeof m.raceT === 'number') {
+    const bw = 240;
+    const bx = cw / 2 - bw / 2;
+    const by = 52;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(bx - 2, by - 2, bw + 4, 14);
+    ctx.fillStyle = m.raceT < 15 ? '#ff4757' : '#7dff8a';
+    ctx.fillRect(bx, by, bw * clamp(m.raceT / 90, 0, 1), 10);
+    text(ctx, `${Math.max(0, Math.ceil(m.raceT))}s`, bx + bw + 8, by - 1, 12, '#fff', 'left', 'bold');
+  }
   // Minimap, top right.
   drawMinimap(ctx, G, cw);
   // Toasts, centre top under the objective.
@@ -125,10 +168,11 @@ export function drawHUD(ctx, G, cw, ch) {
     ty += 34;
   }
   // Controls hint, bottom left.
-  text(ctx, p.inCar ? 'WASD drive · Space handbrake · E exit · M mute' : 'WASD move · Shift run · E enter car · F steal · Click shoot · P pause', 14, ch - 26, 13, 'rgba(255,255,255,0.75)');
-  // Speed, bottom right.
+  text(ctx, p.inCar ? 'WASD drive · Space handbrake · E exit · R restart mission · M mute' : 'WASD move · Shift run · E enter car · F steal · Click shoot · R restart mission · P pause', 14, ch - 26, 13, 'rgba(255,255,255,0.75)');
+  // Speed, bottom right, with the kind of car being driven.
   if (p.inCar) {
     const kmh = Math.round(Math.abs(p.inCar.speed) * 0.24);
+    text(ctx, (p.inCar.kind || 'sedan').toUpperCase(), cw - 16, ch - 78, 13, '#ffd60a', 'right', 'bold');
     text(ctx, `${kmh} km/h`, cw - 16, ch - 52, 26, '#fff', 'right', 'bold');
     // Car health.
     ctx.fillStyle = 'rgba(0,0,0,0.5)';

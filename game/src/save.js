@@ -10,6 +10,7 @@ export function saveGame(G) {
       health: p.health,
       missionsDone: G.missionsDone,
       storyDone: G.storyDone,
+      stashesFound: G.stashesFound || 0,
       x: p.x,
       y: p.y,
       time: G.time,

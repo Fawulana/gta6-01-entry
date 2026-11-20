@@ -26,6 +26,21 @@ export const TRAFFIC_SPEED_MAX = 185;
 export const POLICE_SPEED = 595;
 export const MAX_WANTED = 5;
 
+// Vehicle kinds, each with its own handling: sports cars are quick but
+// fragile, trucks are slow with 220 HP, vans sit in the middle, taxis drive
+// like sedans with a checker strip and a roof sign.
+export const CAR_KINDS = {
+  sedan: { accel: 470, maxSpeed: 560, hp: 100, len: 46, wid: 22 },
+  sports: { accel: 640, maxSpeed: 720, hp: 80, len: 44, wid: 21 },
+  truck: { accel: 320, maxSpeed: 420, hp: 220, len: 56, wid: 26 },
+  van: { accel: 380, maxSpeed: 470, hp: 140, len: 52, wid: 24 },
+  taxi: { accel: 500, maxSpeed: 590, hp: 100, len: 46, wid: 22 },
+};
+
+// The street race: four checkpoints against a 90-second clock.
+export const RACE_TIME_LIMIT = 90;
+export const RACE_CHECKPOINTS = 4;
+
 export const CAR_COLORS = [
   '#c0392b', '#2980b9', '#f39c12', '#27ae60', '#8e44ad',
   '#e8e8e8', '#2c3e50', '#e67e22', '#16a085', '#d35400', '#f5d76e',

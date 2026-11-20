@@ -14,6 +14,7 @@ export function spawnPed(G, x, y) {
     fleeX: 0, fleeY: 0,
     down: false, downT: 0,
     turnT: rng.range(2, 6),
+    pauseT: 0, // standing still, looking at a phone
     axis: rng.chance(0.5) ? 'x' : 'y',
     dir: rng.chance(0.5) ? 1 : -1,
   });
@@ -47,11 +48,15 @@ export function updatePeds(G, dt) {
       ped.x += Math.cos(ped.angle) * ped.speed * 2.4 * dt;
       ped.y += Math.sin(ped.angle) * ped.speed * 2.4 * dt;
       if (d > 600) ped.state = 'walk';
+    } else if (ped.pauseT > 0) {
+      // Standing still, looking at a phone — the city has idle moments too.
+      ped.pauseT -= dt;
     } else {
       ped.turnT -= dt;
       if (ped.turnT <= 0) {
         ped.turnT = rng.range(3, 8);
-        if (rng.chance(0.35)) { ped.axis = ped.axis === 'x' ? 'y' : 'x'; ped.dir = rng.chance(0.5) ? 1 : -1; }
+        if (rng.chance(0.2)) ped.pauseT = rng.range(2, 4);
+        else if (rng.chance(0.35)) { ped.axis = ped.axis === 'x' ? 'y' : 'x'; ped.dir = rng.chance(0.5) ? 1 : -1; }
         else if (rng.chance(0.3)) ped.dir *= -1;
       }
       const step = ped.speed * dt;
@@ -112,7 +117,7 @@ export function drawPed(ctx, ped) {
     return;
   }
   ctx.rotate(ped.angle);
-  // Body and head, walking bob.
+  // Body and head, walking bob. A paused ped holds a glowing phone.
   const bob = Math.sin(performance.now() / 160 + ped.x) * 1.5;
   ctx.fillStyle = ped.shirt;
   ctx.beginPath();
@@ -122,6 +127,10 @@ export function drawPed(ctx, ped) {
   ctx.beginPath();
   ctx.arc(7, 0, 5, 0, Math.PI * 2);
   ctx.fill();
+  if (ped.pauseT > 0) {
+    ctx.fillStyle = '#7dd7ff';
+    ctx.fillRect(10, -7, 4, 7);
+  }
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath();
   ctx.arc(-2, 6, 3, 0, Math.PI * 2);
