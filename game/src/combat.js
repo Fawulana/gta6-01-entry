@@ -22,27 +22,15 @@ export function playerShoot(G) {
     vx: Math.cos(angle) * BULLET_SPEED, vy: Math.sin(angle) * BULLET_SPEED,
     fromPlayer: true, travelled: 0, dead: false,
   });
-  // Muzzle flash: a short-lived bright burst at the gun tip.
-  G.particles.push({
-    x: p.x + Math.cos(angle) * 24, y: p.y + Math.sin(angle) * 24,
-    vx: 0, vy: 0, life: 0.07, maxLife: 0.07, color: '#fff3a0', size: 11,
-  });
   G.events.push({ type: 'shot', x: p.x, y: p.y });
   scarePeds(G, p.x, p.y);
   G.lastCrimeT = G.time;
 }
 
-/** Spawn a rival gang member. opts: { health, lieutenant, hold } — a
- * lieutenant has 5 HP and a gold ring; a holding rival shoots from cover
- * and only closes in once the player gets near. */
-export function spawnRival(G, x, y, opts = {}) {
-  const health = opts.health || 3;
+export function spawnRival(G, x, y) {
   G.enemies.push({
-    x, y, angle: 0, health, maxHealth: health,
-    shootCd: 1 + G.rng.range(0, 1),
-    speed: 120, dead: false,
-    shirt: opts.lieutenant ? '#8a6d1f' : '#7a1f1f',
-    lieutenant: !!opts.lieutenant, hold: !!opts.hold,
+    x, y, angle: 0, health: 3, shootCd: 1 + G.rng.range(0, 1),
+    speed: 120, dead: false, shirt: '#7a1f1f',
   });
 }
 
@@ -116,13 +104,10 @@ export function updateCombat(G, dt) {
     const dy = p.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
     e.angle = Math.atan2(dy, dx);
-    // A holding rival stays on its turf and shoots from cover until the
-    // player closes in; only then does it advance.
-    const holding = e.hold && d > 300;
-    if (!holding && d > 260) {
+    if (d > 260) {
       e.x += Math.cos(e.angle) * e.speed * dt;
       e.y += Math.sin(e.angle) * e.speed * dt;
-    } else if (!holding && d > 60) {
+    } else if (d > 60) {
       e.x += Math.cos(e.angle) * e.speed * 0.4 * dt;
       e.y += Math.sin(e.angle) * e.speed * 0.4 * dt;
     }
@@ -135,10 +120,6 @@ export function updateCombat(G, dt) {
         vx: Math.cos(e.angle + spread) * BULLET_SPEED * 0.8,
         vy: Math.sin(e.angle + spread) * BULLET_SPEED * 0.8,
         fromPlayer: false, travelled: 0, dead: false,
-      });
-      G.particles.push({
-        x: e.x + Math.cos(e.angle) * 22, y: e.y + Math.sin(e.angle) * 22,
-        vx: 0, vy: 0, life: 0.07, maxLife: 0.07, color: '#ffb347', size: 9,
       });
       G.events.push({ type: 'shot', x: e.x, y: e.y });
     }
@@ -167,14 +148,6 @@ export function drawBullet(ctx, b) {
 export function drawEnemy(ctx, e) {
   ctx.save();
   ctx.translate(e.x, e.y);
-  // Lieutenants wear a gold ring so the player can spot the 5-HP threat.
-  if (e.lieutenant) {
-    ctx.strokeStyle = '#ffd60a';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, 15, 0, Math.PI * 2);
-    ctx.stroke();
-  }
   ctx.rotate(e.angle);
   ctx.fillStyle = e.shirt;
   ctx.beginPath();
@@ -186,11 +159,11 @@ export function drawEnemy(ctx, e) {
   ctx.beginPath();
   ctx.arc(8, 0, 5, 0, Math.PI * 2);
   ctx.fill();
-  // Health bar, scaled to the rival's own max (lieutenants have 5 HP).
+  // Health bar.
   ctx.rotate(-e.angle);
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(-12, -20, 24, 4);
-  ctx.fillStyle = e.lieutenant ? '#ffd60a' : '#ff4757';
-  ctx.fillRect(-12, -20, 24 * clamp(e.health / (e.maxHealth || 3), 0, 1), 4);
+  ctx.fillStyle = '#ff4757';
+  ctx.fillRect(-12, -20, 24 * clamp(e.health / 3, 0, 1), 4);
   ctx.restore();
 }

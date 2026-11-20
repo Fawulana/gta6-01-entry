@@ -12,7 +12,7 @@ import { drawCar } from './vehicles.js';
 import { drawPed } from './traffic.js';
 import { drawBullet, drawEnemy } from './combat.js';
 import { drawHUD } from './hud.js';
-import { drawStashes } from './activities.js';
+import { MISSIONS } from './missions.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
@@ -99,46 +99,10 @@ function drawGround(ctx, G) {
     ctx.beginPath(); ctx.moveTo(0, ry - half + 3); ctx.lineTo(WORLD_W, ry - half + 3); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, ry + half - 3); ctx.lineTo(WORLD_W, ry + half - 3); ctx.stroke();
   }
-  // Zebra crosswalks at every intersection, on both axes.
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  for (const rx of city.roadsX) {
-    for (const ry of city.roadsY) {
-      for (let s = -30; s <= 30; s += 15) {
-        ctx.fillRect(rx - half + 6, ry + s - 4, 12, 8);
-        ctx.fillRect(rx + s - 4, ry - half + 6, 8, 12);
-      }
-    }
-  }
-  // Palm-lined beach: palms and striped umbrellas on the sand.
-  for (const pl of city.palms) {
-    ctx.strokeStyle = '#6b4a2a';
-    ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(pl.x, pl.y); ctx.lineTo(pl.x + 6, pl.y - 22); ctx.stroke();
-    ctx.fillStyle = '#2f7a3a';
-    for (let f = 0; f < 5; f += 1) {
-      const a = (f / 5) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.ellipse(pl.x + 6 + Math.cos(a) * 10, pl.y - 22 + Math.sin(a) * 5, 12, 4, a, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // A striped umbrella beside every third palm.
-    if (Math.floor(pl.x / 170) % 3 === 0) {
-      ctx.strokeStyle = '#8a6a4a';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(pl.x + 34, pl.y + 4); ctx.lineTo(pl.x + 34, pl.y - 12); ctx.stroke();
-      ctx.fillStyle = '#ff5a5a';
-      ctx.beginPath(); ctx.arc(pl.x + 34, pl.y - 12, 14, Math.PI, 0); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(pl.x + 34, pl.y - 12, 14, Math.PI, Math.PI * 1.5); ctx.fill();
-      ctx.beginPath(); ctx.arc(pl.x + 34, pl.y - 12, 14, Math.PI * 1.5, Math.PI * 2); ctx.fill();
-    }
-  }
-  // Buildings: roof, inner court, windows. Towers throw long sun shadows
-  // to the south-east, and downtown towers carry a helipad ring.
+  // Buildings: roof, inner court, windows.
   for (const b of city.buildings) {
-    const shadow = b.tall ? 18 : 5;
-    ctx.fillStyle = b.tall ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.22)';
-    ctx.fillRect(b.x + shadow, b.y + shadow + 2, b.w, b.h);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(b.x + 5, b.y + 6, b.w, b.h);
     ctx.fillStyle = b.color;
     ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.fillStyle = b.roof;
@@ -156,18 +120,6 @@ function drawGround(ctx, G) {
     if (b.tall) {
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       ctx.fillRect(b.x + b.w / 2 - 8, b.y + b.h / 2 - 8, 16, 16);
-      // Helipad ring on downtown towers.
-      if (b.x >= 1400 && b.x <= 2200 && b.y >= 1400 && b.y <= 2200) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 22, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        ctx.font = 'bold 16px ' + FONT;
-        ctx.textAlign = 'center';
-        ctx.fillText('H', b.x + b.w / 2, b.y + b.h / 2 - 7);
-      }
     }
   }
   // Trees.
@@ -266,27 +218,10 @@ function drawPlayer(ctx, G) {
   ctx.restore();
 }
 
-/** Skid marks left by handbraking, fading over a few seconds. */
-function drawSkids(ctx, G) {
-  if (!G.skidMarks) return;
-  for (const s of G.skidMarks) {
-    ctx.globalAlpha = clamp(s.life / 6, 0, 0.55);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.save();
-    ctx.translate(s.x, s.y);
-    ctx.rotate(s.angle);
-    ctx.fillRect(-9, -2, 18, 4);
-    ctx.restore();
-  }
-  ctx.globalAlpha = 1;
-}
-
 function drawWorld(ctx, G) {
   drawGround(ctx, G);
   drawMarker(ctx, G);
   drawPickups(ctx, G);
-  drawStashes(ctx, G);
-  drawSkids(ctx, G);
   for (const ped of G.peds) drawPed(ctx, ped);
   for (const e of G.enemies) drawEnemy(ctx, e);
   for (const car of G.cars) if (!car.dead) drawCar(ctx, car);
@@ -339,11 +274,11 @@ export function createRenderer(canvas) {
     ctx.translate(-vx, -vy);
     drawWorld(ctx, G);
     ctx.restore();
-    // Strong dusk grade for the title and chase screenshots.
+    // Dusk tint for the title screenshot.
     if (G.dusk) {
       const grad = ctx.createLinearGradient(0, 0, 0, ch);
-      grad.addColorStop(0, 'rgba(255,120,40,0.20)');
-      grad.addColorStop(1, 'rgba(40,20,90,0.45)');
+      grad.addColorStop(0, 'rgba(255,120,40,0.10)');
+      grad.addColorStop(1, 'rgba(40,20,90,0.28)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, cw, ch);
     }
@@ -351,12 +286,11 @@ export function createRenderer(canvas) {
       ctx.fillStyle = 'rgba(8,12,18,0.55)';
       ctx.fillRect(0, 0, cw, ch);
       const lines = [
-        'An open-world crime story in Solmar Bay — six jobs for Lena Cruz.',
-        'Steal cars, outrun the Solmar PD, race the streets, steal the gold Comet GT.',
-        'WASD move & drive · E enter car · F steal · Click shoot · R restart',
-        'Missions: The Pickup → The Getaway → The Score',
-        'The Street Race → The Heist → The Takeover',
-        'Plus 10 hidden stash chests ($150 each) and five kinds of car to steal.',
+        'An open-world crime story in Solmar Bay.',
+        'Steal cars, outrun the Solmar PD, run jobs for Lena Cruz.',
+        'WASD move & drive · Shift run · E enter car · F steal · Click shoot',
+        `Missions: ${MISSIONS.map((m) => m.title).join('  →  ')}`,
+        '',
       ];
       if (G.hasSave) lines.push('Press C to continue your saved game.');
       drawPanel(ctx, cw, ch, 'SOLMAR BAY', lines, 'Press Enter to start a new game', '#ffd60a');

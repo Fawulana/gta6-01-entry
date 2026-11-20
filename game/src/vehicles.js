@@ -2,7 +2,7 @@
 // grid, stealing, and drawing. Traffic cars drive on the right-hand lane of
 // a road and pick a new direction at each intersection.
 import {
-  CAR_ACCEL, CAR_BRAKE, CAR_COLORS, CAR_KINDS, CAR_LENGTH, CAR_MAX_REVERSE,
+  CAR_ACCEL, CAR_BRAKE, CAR_COLORS, CAR_LENGTH, CAR_MAX_REVERSE,
   CAR_MAX_SPEED, CAR_TURN_RATE, CAR_WIDTH, ROAD_WIDTH, WORLD_H, WORLD_W,
   angleDiff, clamp, dist,
 } from './config.js';
@@ -11,18 +11,12 @@ import { isOnRoad, nearestRoad, resolveBuildings } from './city.js';
 let nextId = 1;
 
 export function makeCar(x, y, angle, color, kind) {
-  const stats = CAR_KINDS[kind] || CAR_KINDS.sedan;
-  const car = {
+  return {
     id: nextId, x, y, angle, speed: 0, color, kind: kind || 'sedan',
-    traffic: false, police: false,
-    health: stats.hp, maxHealth: stats.hp, dead: false,
-    accel: stats.accel, maxSpeed: stats.maxSpeed,
-    len: stats.len, wid: stats.wid,
+    traffic: false, police: false, health: 100, dead: false,
     // traffic AI state
     axis: 'x', dir: 1, lane: 0, cruise: 150, stuck: 0,
   };
-  nextId += 1;
-  return car;
 }
 
 export function carColor(rng) { return rng.pick(CAR_COLORS); }
@@ -34,12 +28,10 @@ export function drivePlayerCar(G, car, dt) {
   const down = input.isDown('KeyS') || input.isDown('ArrowDown');
   const left = input.isDown('KeyA') || input.isDown('ArrowLeft');
   const right = input.isDown('KeyD') || input.isDown('ArrowRight');
-  const accel = car.accel || CAR_ACCEL;
-  const maxSpeed = car.maxSpeed || CAR_MAX_SPEED;
-  if (up) car.speed += accel * dt;
-  if (down) car.speed -= (car.speed > 0 ? CAR_BRAKE : accel * 0.6) * dt;
+  if (up) car.speed += CAR_ACCEL * dt;
+  if (down) car.speed -= (car.speed > 0 ? CAR_BRAKE : CAR_ACCEL * 0.6) * dt;
   if (!up && !down) car.speed -= car.speed * 1.4 * dt;
-  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, maxSpeed);
+  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, CAR_MAX_SPEED);
   const steer = (left ? -1 : 0) + (right ? 1 : 0);
   const moving = Math.abs(car.speed) > 12;
   if (steer !== 0 && moving) {
@@ -149,25 +141,16 @@ export function spawnTrafficCar(G, nearX, nearY) {
   const lane = dir * 19;
   const x = axis === 'x' ? rng.range(120, WORLD_W - 120) : road.line + lane;
   const y = axis === 'y' ? rng.range(120, WORLD_H - 120) : road.line + lane;
-  const car = makeCar(x, y, axis === 'x' ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2), carColor(rng), trafficKind(rng));
+  const car = makeCar(x, y, axis === 'x' ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2), carColor(rng));
   car.traffic = true;
   car.axis = axis;
   car.dir = dir;
   car.lane = lane;
-  // Sports cars cruise faster, trucks slower — the street reads its mix.
-  car.cruise = rng.range(110, 185) * (car.maxSpeed / CAR_MAX_SPEED);
+  car.cruise = rng.range(110, 185);
   car.speed = car.cruise;
   if (!isOnRoad(G.city, car.x, car.y)) return null;
   G.cars.push(car);
   return car;
-}
-
-/** The traffic mix: mostly sedans, with taxis, vans, trucks and sports cars. */
-export function trafficKind(rng) {
-  return rng.weightedPick([
-    ['sedan', 0.42], ['taxi', 0.16], ['van', 0.15],
-    ['truck', 0.1], ['sports', 0.17],
-  ]);
 }
 
 /** The nearest driveable car within maxDist of a point. */
@@ -200,69 +183,40 @@ export function stealCar(G, car) {
 }
 
 export function drawCar(ctx, car) {
-  const len = car.len || CAR_LENGTH;
-  const wid = car.wid || CAR_WIDTH;
   ctx.save();
   ctx.translate(car.x, car.y);
   ctx.rotate(car.angle);
   // Shadow.
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
-  ctx.fillRect(-len / 2 + 3, -wid / 2 + 4, len, wid);
+  ctx.fillRect(-CAR_LENGTH / 2 + 3, -CAR_WIDTH / 2 + 4, CAR_LENGTH, CAR_WIDTH);
   // Body.
   ctx.fillStyle = car.color;
-  roundRect(ctx, -len / 2, -wid / 2, len, wid, 7);
+  roundRect(ctx, -CAR_LENGTH / 2, -CAR_WIDTH / 2, CAR_LENGTH, CAR_WIDTH, 7);
   ctx.fill();
-  // Kind silhouettes: sports cars get a spoiler, trucks a bed, vans a tall
-  // box with side windows, taxis a checker strip and a roof sign.
-  if (car.kind === 'sports') {
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(-len / 2 + 1, -wid / 2 - 2, 4, wid + 4); // rear spoiler
-    ctx.fillStyle = 'rgba(20,30,40,0.9)';
-    roundRect(ctx, -4, -wid / 2 + 3, 12, wid - 6, 3);
-    ctx.fill();
-  } else if (car.kind === 'truck') {
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(-len / 2 + 4, -wid / 2 + 3, len - 24, wid - 6); // open bed
-    ctx.fillStyle = 'rgba(20,30,40,0.85)';
-    roundRect(ctx, len / 2 - 18, -wid / 2 + 3, 14, wid - 6, 3); // cab
-    ctx.fill();
-  } else if (car.kind === 'van') {
-    ctx.fillStyle = 'rgba(200,220,235,0.6)';
-    ctx.fillRect(2, -wid / 2 + 3, 6, wid - 6);
-    ctx.fillRect(-len / 2 + 6, -wid / 2 + 3, 4, wid - 6);
-  } else if (car.kind === 'taxi') {
-    ctx.fillStyle = '#111';
-    for (let i = 0; i < 5; i += 1) {
-      ctx.fillRect(-len / 2 + 6 + i * 7, -wid / 2 + 1, 3, 4);
-      ctx.fillRect(-len / 2 + 6 + i * 7, wid / 2 - 5, 3, 4);
-    }
-    ctx.fillStyle = '#ffd60a';
-    ctx.fillRect(-3, -wid / 2 - 4, 8, 4); // roof sign
-  }
   // Cabin and windshield.
   ctx.fillStyle = 'rgba(20,30,40,0.85)';
-  roundRect(ctx, -8, -wid / 2 + 4, 16, wid - 8, 4);
+  roundRect(ctx, -8, -CAR_WIDTH / 2 + 4, 16, CAR_WIDTH - 8, 4);
   ctx.fill();
   ctx.fillStyle = 'rgba(200,220,235,0.75)';
-  ctx.fillRect(8, -wid / 2 + 5, 4, wid - 10);
+  ctx.fillRect(8, -CAR_WIDTH / 2 + 5, 4, CAR_WIDTH - 10);
   // Headlights and taillights.
   ctx.fillStyle = '#fff8c0';
-  ctx.fillRect(len / 2 - 2, -wid / 2 + 2, 2, 5);
-  ctx.fillRect(len / 2 - 2, wid / 2 - 7, 2, 5);
+  ctx.fillRect(CAR_LENGTH / 2 - 2, -CAR_WIDTH / 2 + 2, 2, 5);
+  ctx.fillRect(CAR_LENGTH / 2 - 2, CAR_WIDTH / 2 - 7, 2, 5);
   ctx.fillStyle = '#ff3b30';
-  ctx.fillRect(-len / 2, -wid / 2 + 2, 2, 5);
-  ctx.fillRect(-len / 2, wid / 2 - 7, 2, 5);
+  ctx.fillRect(-CAR_LENGTH / 2, -CAR_WIDTH / 2 + 2, 2, 5);
+  ctx.fillRect(-CAR_LENGTH / 2, CAR_WIDTH / 2 - 7, 2, 5);
   if (car.police) {
     ctx.fillStyle = '#111';
-    ctx.fillRect(-len / 2 + 4, -wid / 2 + 2, len - 8, 4);
+    ctx.fillRect(-CAR_LENGTH / 2 + 4, -CAR_WIDTH / 2 + 2, CAR_LENGTH - 8, 4);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 9px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('POLICE', 0, -wid / 2 + 12);
+    ctx.fillText('POLICE', 0, -CAR_WIDTH / 2 + 12);
     // Light bar, flashing with time.
     const flash = Math.floor(performance.now() / 180) % 2 === 0;
     ctx.fillStyle = flash ? '#ff2d55' : '#0a84ff';
-    ctx.fillRect(-4, -wid / 2 - 2, 8, 4);
+    ctx.fillRect(-4, -CAR_WIDTH / 2 - 2, 8, 4);
   }
   ctx.restore();
 }

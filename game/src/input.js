@@ -28,8 +28,6 @@ export function createInput(canvas) {
   window.addEventListener('mouseup', () => { input.mouse.down = false; });
   input.isDown = (code) => input.keys.has(code);
   input.wasPressed = (code) => input.pressed.has(code);
-  /** R restarts the current mission (or race): a one-frame press, like any key. */
-  input.wasRestartPressed = () => input.pressed.has('KeyR');
   input.consumePressed = () => { input.pressed.clear(); };
   input.consumeClick = () => { input.mouse.clicked = false; };
   return input;

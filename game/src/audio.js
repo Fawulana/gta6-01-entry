@@ -94,14 +94,6 @@ function noiseBurst(dur, vol, lowpass) {
 
 export function playShot() { noiseBurst(0.12, 0.5, 2400); blip(180, 0.08, 'square', 0.18); }
 export function playPickup() { blip(660, 0.09, 'sine', 0.3); blip(990, 0.14, 'sine', 0.3, 0.08); }
-/** Stash chime: a rising three-note arpeggio when a hidden chest is found. */
-export function playStash() {
-  blip(784, 0.1, 'sine', 0.3);
-  blip(1046.5, 0.1, 'sine', 0.3, 0.09);
-  blip(1318.5, 0.22, 'sine', 0.32, 0.18);
-}
-/** Race countdown beep: one short high blip for the start and each final second. */
-export function playRaceBeep() { blip(880, 0.09, 'square', 0.22); blip(1320, 0.06, 'square', 0.14, 0.05); }
 export function playCrash() { noiseBurst(0.3, 0.55, 700); }
 export function playBusted() { blip(392, 0.2, 'triangle', 0.3); blip(311, 0.35, 'triangle', 0.3, 0.18); }
 export function playMissionDone() {

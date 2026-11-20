@@ -9,8 +9,8 @@ import { makeCar, spawnTrafficCar } from './vehicles.js';
 import { seedPeds } from './traffic.js';
 import { addWanted } from './police.js';
 
-const CHASE_SECONDS = 3;
-const STREET_SECONDS = 3;
+const CHASE_SECONDS = 4;
+const STREET_SECONDS = 6;
 const MISSION_SECONDS = 4;
 const TITLE_SECONDS = 10;
 
@@ -66,57 +66,38 @@ function runSteps(G, stepFn, seconds, steer) {
  */
 export function stageShot(name, G, stepFn) {
   if (name === 'chase') {
-    // Cover: a 4-star dusk chase down a downtown avenue in a red sports car,
-    // police in line behind and a roadblock holding the road ahead.
+    // Cover: a 3-star chase down a downtown avenue, police closing in.
     startMission(G, 0);
-    G.dusk = true;
-    const car = makeCar(600, 1000, 0, '#c0392b', 'sports');
+    const car = makeCar(600, 1000, 0, '#c0392b', 'sedan');
     car.health = 400; // the staged chase runs the full scene without a wreck
-    car.maxHealth = 400;
     G.cars.push(car);
     G.player.inCar = car;
     G.player.x = car.x;
     G.player.y = car.y;
     G.camera.x = car.x;
     G.camera.y = car.y;
-    addWanted(G, 4);
-    const cops = [[-360, 0], [-500, 0], [-640, 0]];
+    addWanted(G, 3);
+    const cops = [[-380, -40], [-520, 50], [-450, -80]];
     for (const [dx, dy] of cops) {
       const cop = makeCar(car.x + dx, car.y + dy, 0, '#1a1a1a', 'police');
       cop.police = true;
       cop.speed = 430;
       G.cars.push(cop);
     }
-    // Roadblock: two cruisers sideways across the road ahead, holding.
-    // Placed a full drive ahead so the chase reaches them in frame.
-    for (const off of [-30, 30]) {
-      const block = makeCar(car.x + 1700, 1000 + off, Math.PI / 2, '#1a1a1a', 'police');
-      block.police = true;
-      block.blockT = 2.5;
-      G.cars.push(block);
-    }
     spawnTrafficCar(G, 2000, 1000);
     spawnTrafficCar(G, 2300, 1000);
-    // Pedestrians a block south, off the chase line, so the cover stays clean.
-    seedPeds(G, 1800, 1400, 14);
-    // Keep the chase corridor itself clear of pedestrians.
-    G.peds = G.peds.filter((pd) => Math.abs(pd.y - 1000) > 80);
+    seedPeds(G, 1800, 1000, 14);
     runSteps(G, stepFn, CHASE_SECONDS, driveEast);
     return { screen: SCREEN_PLAY };
   }
   if (name === 'street') {
-    // On foot downtown: a red sports car and a taxi parked nearby, peds on
-    // the sidewalk, and a gold stash chest waiting at the corner.
+    // On foot downtown, traffic and pedestrians all around.
     startMission(G, 0);
     G.player.x = 1750;
     G.player.y = 1790;
     G.player.angle = 0;
     G.camera.x = G.player.x;
     G.camera.y = G.player.y;
-    const sports = makeCar(2120, 1768, 0, '#c0392b', 'sports');
-    G.cars.push(sports);
-    const taxi = makeCar(2000, 1815, Math.PI, '#f5d76e', 'taxi');
-    G.cars.push(taxi);
     seedPeds(G, 1800, 1800, 30);
     spawnTrafficCar(G, 1800, 1800);
     spawnTrafficCar(G, 1800, 1400);
@@ -125,22 +106,14 @@ export function stageShot(name, G, stepFn) {
     return { screen: SCREEN_PLAY };
   }
   if (name === 'mission') {
-    // The Takeover (finale, &finale=1): eight Vultures hold the docks, the
-    // lieutenants gold-ringed, cash drops from every rival that falls.
-    const finale = new URLSearchParams(window.location.search).get('finale') === '1';
-    startMission(G, finale ? 5 : 2);
+    // The Score: clearing the Vultures at the Old Warehouse.
+    startMission(G, 2);
     G.player.x = 2450;
     G.player.y = 1400;
     G.player.angle = 0;
     G.camera.x = G.player.x;
     G.camera.y = G.player.y;
     G.player.cash = 2400;
-    if (finale) {
-      G.player.x = 2400;
-      G.player.y = 2620;
-      G.camera.x = G.player.x;
-      G.camera.y = G.player.y;
-    }
     runSteps(G, stepFn, MISSION_SECONDS, fightRivals);
     return { screen: SCREEN_PLAY };
   }

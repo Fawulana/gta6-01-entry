@@ -1,22 +1,15 @@
-// Solmar Bay v2 — a gta6-01 entry (Node 22, standard library only). The game is
+// Solmar Bay — a gta6-01 entry (Node 22, standard library only). The game is
 // this directory's game/ folder, plain static files a desktop browser loads
 // offline (game/index.html and its ES modules, no library and no network
 // request), and the program hands it in. It copies game/ and screenshots/
 // from beside this file to /output and writes /output/dossier.json, the
 // summary the judge reads, with the vendored make.fun library. The game is
 // an original top-down open-world crime game: a city to explore on foot and
-// by car, traffic and pedestrians, five kinds of car to steal (sedan, sports,
-// truck, van, taxi), a wanted level with police who chase and set roadblocks,
-// six linked story missions for Lena Cruz (The Pickup, The Getaway, The
-// Score, The Street Race, The Heist, The Takeover), 10 hidden stash chests,
-// combat with muzzle flashes and gold-ringed lieutenants, a HUD with a
-// minimap, race clock and stash counter, a start screen and a localStorage
-// save, and synthesized WebAudio sound.
+// by car, traffic and pedestrians, cars to steal, a wanted level with police
+// who chase, three linked story missions, combat, a HUD with a minimap, a
+// start screen and a localStorage save, and synthesized WebAudio sound.
 // The entry needs no build step and no network at any point: main.ts only
-// copies files and writes the dossier from the vendored library. v2's
-// screenshots are real renders of the game itself, staged by game/src/shots.js
-// (?shot=chase|street|mission|title with &seed=7; the mission shot stages
-// the finale, The Takeover, with &finale=1).
+// copies files and writes the dossier from the vendored library.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
