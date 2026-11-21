@@ -1,36 +1,50 @@
-// Save and load through localStorage: cash, story progress, health and the
-// player's position. Saving happens at the safehouse and after each mission.
-export const SAVE_KEY = 'solmar-bay.save.v1';
+// localStorage save for Solmar Bay. Small and versioned: missions done,
+// cash, stashes found and best race time. Loading never throws — a corrupt
+// or missing save just means a fresh start.
+import { SAVE_KEY } from './config.js';
 
-export function saveGame(G) {
+export function blankSave() {
+  return {
+    version: 1,
+    missionsDone: 0,
+    cash: 0,
+    stashes: [], // indices into STASH_SPOTS
+    bestRace: null, // seconds, lower is better
+    storyDone: false,
+  };
+}
+
+export function loadSave() {
   try {
-    const p = G.player;
-    const data = {
-      cash: p.cash,
-      health: p.health,
-      missionsDone: G.missionsDone,
-      storyDone: G.storyDone,
-      x: p.x,
-      y: p.y,
-      time: G.time,
-    };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return blankSave();
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return blankSave();
+    const save = blankSave();
+    if (Number.isFinite(data.missionsDone)) save.missionsDone = Math.max(0, Math.min(6, Math.floor(data.missionsDone)));
+    if (Number.isFinite(data.cash)) save.cash = Math.max(0, Math.floor(data.cash));
+    if (Array.isArray(data.stashes)) save.stashes = data.stashes.filter((i) => Number.isInteger(i) && i >= 0 && i < 10);
+    if (Number.isFinite(data.bestRace)) save.bestRace = data.bestRace;
+    save.storyDone = data.storyDone === true;
+    return save;
+  } catch {
+    return blankSave();
+  }
+}
+
+export function writeSave(save) {
+  try {
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
     return true;
   } catch {
     return false;
   }
 }
 
-export function loadSave() {
+export function clearSave() {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (typeof data.cash !== 'number' || typeof data.x !== 'number') return null;
-    return data;
+    window.localStorage.removeItem(SAVE_KEY);
   } catch {
-    return null;
+    // storage unavailable: nothing to clear
   }
 }
-
-export function hasSave() { return loadSave() !== null; }

@@ -1,232 +1,168 @@
-// Cars: the player's driving physics, the traffic that follows the road
-// grid, stealing, and drawing. Traffic cars drive on the right-hand lane of
-// a road and pick a new direction at each intersection.
-import {
-  CAR_ACCEL, CAR_BRAKE, CAR_COLORS, CAR_LENGTH, CAR_MAX_REVERSE,
-  CAR_MAX_SPEED, CAR_TURN_RATE, CAR_WIDTH, ROAD_WIDTH, WORLD_H, WORLD_W,
-  angleDiff, clamp, dist,
-} from './config.js';
-import { isOnRoad, nearestRoad, resolveBuildings } from './city.js';
+// Vehicles for Solmar Bay: kinds, spawning and arcade driving physics.
+// A car is a plain object; the physics here are deliberately simple and
+// forgiving — accelerate, steer harder at low speed, drift on the handbrake
+// — so driving feels good with a keyboard.
+import { VEHICLE_KINDS, WORLD, ROAD_LINES, LANE } from './config.js';
+import { makeRng, range, pick, intRange } from './random.js';
 
-let nextId = 1;
+let nextCarId = 1;
 
-export function makeCar(x, y, angle, color, kind) {
+export function makeCar(kindName, x, y, angle, opts = {}) {
+  const kind = VEHICLE_KINDS[kindName];
   return {
-    id: nextId, x, y, angle, speed: 0, color, kind: kind || 'sedan',
-    traffic: false, police: false, health: 100, dead: false,
-    // traffic AI state
-    axis: 'x', dir: 1, lane: 0, cruise: 150, stuck: 0,
+    id: nextCarId,
+    kind: kindName,
+    label: kind.label,
+    color: opts.color || kind.color,
+    dark: kind.dark,
+    len: kind.len,
+    wid: kind.wid,
+    x, y,
+    angle, // radians, 0 = east
+    speed: 0,
+    maxSpeed: kind.maxSpeed,
+    accel: kind.accel,
+    grip: kind.grip,
+    hp: opts.hp ?? kind.hp,
+    maxHp: opts.hp ?? kind.hp,
+    cruise: kind.cruise,
+    traffic: opts.traffic ?? false, // true = AI traffic car
+    parked: opts.parked ?? false,
+    roadAxis: opts.roadAxis || 'h', // 'h' drives along x, 'v' along y
+    roadLine: opts.roadLine ?? 0,
+    dir: opts.dir ?? 1, // +1 or -1 along the road
+    turnCooldown: 0,
+    wanted: false, // police car on duty
+    gold: kindName === 'comet' && opts.gold === true,
+    dead: false,
   };
 }
 
-export function carColor(rng) { return rng.pick(CAR_COLORS); }
-
-/** Player driving: W/Up accelerates, S/Down brakes and reverses, A/D steer. */
-export function drivePlayerCar(G, car, dt) {
-  const input = G.input;
-  const up = input.isDown('KeyW') || input.isDown('ArrowUp');
-  const down = input.isDown('KeyS') || input.isDown('ArrowDown');
-  const left = input.isDown('KeyA') || input.isDown('ArrowLeft');
-  const right = input.isDown('KeyD') || input.isDown('ArrowRight');
-  if (up) car.speed += CAR_ACCEL * dt;
-  if (down) car.speed -= (car.speed > 0 ? CAR_BRAKE : CAR_ACCEL * 0.6) * dt;
-  if (!up && !down) car.speed -= car.speed * 1.4 * dt;
-  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, CAR_MAX_SPEED);
-  const steer = (left ? -1 : 0) + (right ? 1 : 0);
-  const moving = Math.abs(car.speed) > 12;
-  if (steer !== 0 && moving) {
-    car.angle += steer * CAR_TURN_RATE * dt * clamp(Math.abs(car.speed) / 220, 0.35, 1) * (car.speed < 0 ? -1 : 1);
-  }
-  moveCar(G, car, dt);
+// A random traffic kind, weighted so sedans and taxis dominate the streets.
+export function randomTrafficKind(rng) {
+  const r = rng();
+  if (r < 0.34) return 'sedan';
+  if (r < 0.52) return 'taxi';
+  if (r < 0.68) return 'van';
+  if (r < 0.84) return 'sports';
+  return 'truck';
 }
 
-/** Advance a car along its heading and resolve building / car collisions. */
-export function moveCar(G, car, dt) {
-  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  const fixed = resolveBuildings(G.city, nx, ny, CAR_LENGTH * 0.55);
-  const hitWall = fixed.x !== nx || fixed.y !== ny;
-  if (hitWall && Math.abs(car.speed) > 260) {
-    car.speed *= 0.45;
-    G.events.push({ type: 'crash' });
-  } else if (hitWall) {
-    car.speed *= 0.7;
-  }
-  car.x = clamp(fixed.x, 30, WORLD_W - 30);
-  car.y = clamp(fixed.y, 30, WORLD_H - 30);
-  // Soft car-to-car push so traffic never stacks into one spot.
-  for (const other of G.cars) {
-    if (other === car || other.dead) continue;
-    const d = dist(car.x, car.y, other.x, other.y);
-    if (d > 0.01 && d < CAR_LENGTH) {
-      const push = (CAR_LENGTH - d) / 2;
-      const ux = (car.x - other.x) / d;
-      const uy = (car.y - other.y) / d;
-      car.x += ux * push;
-      car.y += uy * push;
-      if (car.traffic) car.speed = Math.min(car.speed, other.speed);
-    }
-  }
+export function randomCarColor(rng, kindName) {
+  const palette = {
+    sedan: ['#4a7fb5', '#7a4a8a', '#3f8a5f', '#b5b0a8', '#c25a3a'],
+    sports: ['#d23b2e', '#e8b73a', '#2e6fd2', '#e8e8e8', '#222831'],
+    truck: ['#c98a2e', '#7d8a99', '#8a5c2e'],
+    van: ['#7d8a99', '#b5b0a8', '#4a6b8a'],
+    taxi: ['#f2c230'],
+    police: ['#1e2a38'],
+    comet: ['#e8b73a'],
+  };
+  const list = palette[kindName] || ['#888888'];
+  return list[Math.floor(rng() * list.length)];
 }
 
-/** Traffic: follow the current road; at an intersection pick a new heading. */
-export function updateTrafficCar(G, car, dt) {
-  const rng = G.rng;
-  const half = ROAD_WIDTH / 2;
-  // Where the car is along its current axis, and how close the next crossing is.
-  const along = car.axis === 'x' ? car.x : car.y;
-  const cross = car.axis === 'x' ? G.city.roadsY : G.city.roadsX;
-  let nextCross = null;
-  for (const c of cross) {
-    if (car.dir > 0 && c > along + 10) { nextCross = c; break; }
-    if (car.dir < 0 && c < along - 10) { nextCross = c; break; }
-  }
-  if (nextCross !== null && Math.abs(along - nextCross) < 26) {
-    // At the intersection: mostly straight on, sometimes turn.
-    const roll = rng.next();
-    if (roll < 0.16) {
-      // Turn left or right onto the crossing road.
-      const newAxis = car.axis === 'x' ? 'y' : 'x';
-      const turn = rng.chance(0.5) ? 1 : -1;
-      car.axis = newAxis;
-      car.dir = turn;
-      car.lane = turn * 19;
-      car.angle = newAxis === 'x' ? (turn > 0 ? 0 : Math.PI) : (turn > 0 ? Math.PI / 2 : -Math.PI / 2);
-      if (newAxis === 'x') car.y = nextCross + car.lane;
-      else car.x = nextCross + car.lane;
-    }
-    // else: carry straight on.
-  }
-  // Ease toward the lane centre and cruise speed; slow for a car ahead.
-  const laneTarget = car.axis === 'x' ? (car.dir > 0 ? 19 : -19) : (car.dir > 0 ? 19 : -19);
-  car.lane += (laneTarget - car.lane) * Math.min(1, dt * 3);
-  const ahead = carAhead(G, car);
-  const want = ahead !== null ? Math.min(car.cruise, ahead * 0.8) : car.cruise;
-  car.speed += clamp(want - car.speed, -260 * dt, 200 * dt);
-  if (car.axis === 'x') {
-    car.y = nearestRoad(G.city, car.x, car.y).line + car.lane;
-    car.x += car.dir * car.speed * dt;
+// Spawn a traffic car on a random road, in a lane, moving with the flow.
+export function spawnTrafficCar(rng, margin = 0) {
+  const axis = rng() < 0.5 ? 'h' : 'v';
+  const line = pick(rng, ROAD_LINES);
+  const dir = rng() < 0.5 ? 1 : -1;
+  const laneOff = LANE * (axis === 'h' ? dir : dir);
+  let x;
+  let y;
+  let angle;
+  if (axis === 'h') {
+    x = range(rng, 100, WORLD - 100);
+    y = line + (dir > 0 ? LANE : -LANE);
+    angle = dir > 0 ? 0 : Math.PI;
   } else {
-    car.x = nearestRoad(G.city, car.x, car.y).line + car.lane;
-    car.y += car.dir * car.speed * dt;
+    x = line + (dir > 0 ? -LANE : LANE);
+    y = range(rng, 100, WORLD - 100);
+    angle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
   }
-  car.angle = car.axis === 'x' ? (car.dir > 0 ? 0 : Math.PI) : (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-  car.x = clamp(car.x, 40, WORLD_W - 40);
-  car.y = clamp(car.y, 40, WORLD_H - 40);
-}
-
-/** Distance to the nearest car ahead on the same road, or null. */
-function carAhead(G, car) {
-  let best = null;
-  for (const other of G.cars) {
-    if (other === car || other.dead) continue;
-    if (car.axis === 'x' && Math.abs(other.y - car.y) < 30) {
-      const gap = (other.x - car.x) * car.dir;
-      if (gap > 0 && gap < 90 && (best === null || gap < best)) best = gap;
-    }
-    if (car.axis === 'y' && Math.abs(other.x - car.x) < 30) {
-      const gap = (other.y - car.y) * car.dir;
-      if (gap > 0 && gap < 90 && (best === null || gap < best)) best = gap;
-    }
-  }
-  return best;
-}
-
-/** Spawn a traffic car on a road near (but not on top of) the given point. */
-export function spawnTrafficCar(G, nearX, nearY) {
-  const rng = G.rng;
-  const road = nearestRoad(G.city, nearX + rng.range(-500, 500), nearY + rng.range(-500, 500));
-  const axis = road.axis;
-  const dir = rng.chance(0.5) ? 1 : -1;
-  const lane = dir * 19;
-  const x = axis === 'x' ? rng.range(120, WORLD_W - 120) : road.line + lane;
-  const y = axis === 'y' ? rng.range(120, WORLD_H - 120) : road.line + lane;
-  const car = makeCar(x, y, axis === 'x' ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2), carColor(rng));
-  car.traffic = true;
-  car.axis = axis;
-  car.dir = dir;
-  car.lane = lane;
-  car.cruise = rng.range(110, 185);
-  car.speed = car.cruise;
-  if (!isOnRoad(G.city, car.x, car.y)) return null;
-  G.cars.push(car);
+  const kindName = randomTrafficKind(rng);
+  const car = makeCar(kindName, x, y, angle, {
+    traffic: true,
+    roadAxis: axis,
+    roadLine: line,
+    dir,
+    color: randomCarColor(rng, kindName),
+  });
+  car.speed = car.cruise * range(rng, 0.8, 1.1);
   return car;
 }
 
-/** The nearest driveable car within maxDist of a point. */
-export function nearestCar(G, x, y, maxDist) {
-  let best = null;
-  let bestD = maxDist;
-  for (const car of G.cars) {
-    if (car.dead) continue;
-    const d = dist(x, y, car.x, car.y);
-    if (d < bestD) { bestD = d; best = car; }
+// --- Driving physics -------------------------------------------------------
+// dt seconds, throttle -1..1, steer -1..1, handbrake bool. Returns events
+// the caller may react to: { skidding, bumped }.
+export function driveCar(car, dt, throttle, steer, handbrake, state) {
+  const events = { skidding: false, bumped: false };
+  const speed = car.speed;
+  if (throttle > 0) {
+    car.speed += car.accel * throttle * dt;
+  } else if (throttle < 0) {
+    // Brake, then reverse slowly.
+    if (speed > 10) car.speed += car.accel * 1.6 * throttle * dt;
+    else car.speed += car.accel * 0.45 * throttle * dt;
+  } else {
+    car.speed -= Math.sign(speed) * 60 * dt;
+    if (Math.abs(car.speed) < 8) car.speed = 0;
   }
-  return best;
-}
+  // Rolling drag.
+  car.speed -= car.speed * 0.25 * dt;
+  const maxFwd = car.maxSpeed;
+  const maxRev = 140;
+  if (car.speed > maxFwd) car.speed = maxFwd;
+  if (car.speed < -maxRev) car.speed = -maxRev;
 
-/** Steal the nearest car: its driver (if any) flees on foot, the player gets in. */
-export function stealCar(G, car) {
-  car.traffic = false;
-  car.police = false;
-  G.player.inCar = car;
-  G.player.x = car.x;
-  G.player.y = car.y;
-  G.addWanted(1);
-  G.toast('Car stolen — the cops noticed.');
-  G.events.push({ type: 'steal' });
-  // A fleeing driver appears beside the car.
-  G.peds.push({
-    x: car.x + 40, y: car.y + 30, angle: 0, speed: 190, shirt: '#f5f5f5',
-    state: 'flee', fleeX: car.x + 400, fleeY: car.y + 400, down: false, downT: 0,
-  });
-}
-
-export function drawCar(ctx, car) {
-  ctx.save();
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
-  // Shadow.
-  ctx.fillStyle = 'rgba(0,0,0,0.28)';
-  ctx.fillRect(-CAR_LENGTH / 2 + 3, -CAR_WIDTH / 2 + 4, CAR_LENGTH, CAR_WIDTH);
-  // Body.
-  ctx.fillStyle = car.color;
-  roundRect(ctx, -CAR_LENGTH / 2, -CAR_WIDTH / 2, CAR_LENGTH, CAR_WIDTH, 7);
-  ctx.fill();
-  // Cabin and windshield.
-  ctx.fillStyle = 'rgba(20,30,40,0.85)';
-  roundRect(ctx, -8, -CAR_WIDTH / 2 + 4, 16, CAR_WIDTH - 8, 4);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(200,220,235,0.75)';
-  ctx.fillRect(8, -CAR_WIDTH / 2 + 5, 4, CAR_WIDTH - 10);
-  // Headlights and taillights.
-  ctx.fillStyle = '#fff8c0';
-  ctx.fillRect(CAR_LENGTH / 2 - 2, -CAR_WIDTH / 2 + 2, 2, 5);
-  ctx.fillRect(CAR_LENGTH / 2 - 2, CAR_WIDTH / 2 - 7, 2, 5);
-  ctx.fillStyle = '#ff3b30';
-  ctx.fillRect(-CAR_LENGTH / 2, -CAR_WIDTH / 2 + 2, 2, 5);
-  ctx.fillRect(-CAR_LENGTH / 2, CAR_WIDTH / 2 - 7, 2, 5);
-  if (car.police) {
-    ctx.fillStyle = '#111';
-    ctx.fillRect(-CAR_LENGTH / 2 + 4, -CAR_WIDTH / 2 + 2, CAR_LENGTH - 8, 4);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 9px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('POLICE', 0, -CAR_WIDTH / 2 + 12);
-    // Light bar, flashing with time.
-    const flash = Math.floor(performance.now() / 180) % 2 === 0;
-    ctx.fillStyle = flash ? '#ff2d55' : '#0a84ff';
-    ctx.fillRect(-4, -CAR_WIDTH / 2 - 2, 8, 4);
+  const speedFactor = Math.min(1, Math.abs(speed) / 220);
+  const steerRate = car.grip * (handbrake ? 1.7 : 1) * (0.55 + 0.45 * speedFactor);
+  if (speed !== 0) {
+    car.angle += steer * steerRate * dt * Math.sign(speed);
   }
-  ctx.restore();
+  events.skidding = handbrake && Math.abs(speed) > 120;
+  if (events.skidding) {
+    // Drift: the car slides sideways a touch and loses grip.
+    car.speed -= car.speed * 0.5 * dt;
+  }
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  // World bounds: bounce softly off the edge.
+  if (nx < 30 || nx > WORLD - 30 || ny < 30 || ny > WORLD - 30) {
+    car.speed *= -0.3;
+    events.bumped = true;
+  } else {
+    car.x = nx;
+    car.y = ny;
+  }
+  return events;
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+// Simple circle-ish collision between two cars (using their length as the
+// radius). Returns true when they overlap.
+export function carsOverlap(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const r = (a.len + b.len) / 2 - 6;
+  return dx * dx + dy * dy < r * r;
+}
+
+// Push two overlapping cars apart and trade a little speed (a soft bump).
+export function resolveCarCollision(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const overlap = (a.len + b.len) / 2 - 6 - dist;
+  if (overlap <= 0) return false;
+  const push = overlap / 2;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  a.x -= ux * push;
+  a.y -= uy * push;
+  b.x += ux * push;
+  b.y += uy * push;
+  const tmp = a.speed;
+  a.speed = b.speed * 0.4;
+  b.speed = tmp * 0.4;
+  return true;
 }
