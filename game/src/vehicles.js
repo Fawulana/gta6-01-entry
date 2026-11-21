@@ -1,116 +1,234 @@
-// Vehicles: spawning, driving physics, entering/exiting, damage, skid marks
-// and smoke. Eight kinds with distinct top speed, acceleration and grip —
-// the Wasp bike is fastest and loosest, the Bison truck slowest and toughest.
-import { VEHICLES, WORLD } from './config.js';
-import { clamp, dist, wrapAngle, angleDiff } from './random.js';
-import { collideBuildings, onRoad } from './city.js';
+// Cars: the player's ride, the traffic that fills the roads, the parked cars
+// waiting to be stolen, and the police Interceptors. Arcade physics — a bicycle
+// model with speed-sensitive steering, a handbrake drift, and slide-along
+// building collisions — with a distinct handling model per car class.
 
-let nextId = 1;
-export function makeCar(kind, x, y, angle, opts = {}) {
-  const spec = VEHICLES[kind];
+import { CAR_MODELS, ROADS, WORLD } from './config.js';
+import { pick, rangeInt } from './random.js';
+
+const TAU = Math.PI * 2;
+
+function angleDiff(a, b) {
+  let d = (a - b) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
+export function makeCar(modelKey, x, y, angle, color) {
+  const model = CAR_MODELS[modelKey];
   return {
-    id: nextId++, kind, x, y, angle: angle ?? 0, speed: 0,
-    color: opts.color || spec.color, hp: spec.hp, maxHp: spec.hp,
-    traffic: !!opts.traffic, parked: !!opts.parked, police: kind === 'police',
-    driver: opts.driver || null, brakeLight: false, dead: false,
-    turnTarget: null, lane: opts.lane || 0, cruise: opts.cruise || 0,
+    modelKey, model, color: color || model.colors[0],
+    x, y, angle, speed: 0,
+    steer: 0, health: 100, smoke: 0, damageCooldown: 0,
+    isPlayer: false, isCop: false, isTraffic: false, parked: false,
+    route: null, waypoint: 0, cruise: 0, stuck: 0, dead: false,
+    brakeLight: false, horn: 0,
   };
 }
-export function spawnParkedCars(G, rng) {
+
+/** Parked cars along curbs, ready to be stolen. */
+export function spawnParkedCars(random, city) {
+  const cars = [];
   const spots = [];
-  for (let i = 0; i < 26; i++) {
-    const p = { x: 0, y: 0 };
-    const vertical = rng.chance(0.5);
-    const road = rng.pick([280, 640, 1000, 1360, 1720, 2080, 2440, 2800]);
-    const along = rng.range(300, 3200);
-    if (vertical) { p.x = road + (rng.chance(0.5) ? 62 : -62); p.y = along; }
-    else { p.y = road + (rng.chance(0.5) ? 62 : -62); p.x = along; }
-    if (dist(p.x, p.y, G.player.x, G.player.y) < 500) continue;
-    const kind = rng.pick(['sedan', 'sedan', 'sports', 'truck', 'van', 'taxi', 'bike']);
-    G.cars.push(makeCar(kind, p.x, p.y, vertical ? (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2) : (rng.chance(0.5) ? 0 : Math.PI), { parked: true }));
-    spots.push(p);
+  for (const ax of ROADS.avenues) {
+    for (const sy of ROADS.streets) {
+      spots.push({ x: ax + ROADS.halfWidth - 22, y: sy + 120, angle: Math.PI / 2 });
+      spots.push({ x: ax - ROADS.halfWidth + 22, y: sy - 120, angle: -Math.PI / 2 });
+    }
   }
-  return spots;
-}
-export function nearestCar(G, x, y, maxD) {
-  let best = null, bd = maxD;
-  for (const c of G.cars) {
-    if (c.dead || c.traffic) continue;
-    const d = dist(x, y, c.x, c.y);
-    if (d < bd) { bd = d; best = c; }
+  for (let i = 0; i < 26; i += 1) {
+    const spot = spots[rangeInt(random, 0, spots.length)];
+    const key = pick(random, ['sedan', 'sedan', 'sports', 'taxi', 'truck']);
+    const car = makeCar(key, spot.x, spot.y, spot.angle, pick(random, CAR_MODELS[key].colors));
+    car.parked = true;
+    cars.push(car);
   }
-  return best;
+  // The gold Aurum GT waits at the marina for the finale, parked on the sand
+  // east of the hotels where nothing can hide it.
+  const gold = makeCar('gold', 3950, 700, Math.PI / 2, '#ffd700');
+  gold.parked = true;
+  gold.gold = true;
+  cars.push(gold);
+  return cars;
 }
-export function enterCar(G, car) {
-  const p = G.player;
-  p.car = car; p.onFoot = false; car.parked = false; car.driver = 'player';
-  G.audio.unlock(); G.audio.radio();
-  G.feed.push('Stole the ' + VEHICLES[car.kind].name);
-  if (car.kind !== 'police' && G.wanted < 1 && Math.random() < 0.55) addWanted(G, 1, 'car theft');
+
+/** Traffic cars that drive the road grid, following waypoint routes. */
+export function spawnTraffic(random, city, count) {
+  const cars = [];
+  for (let i = 0; i < count; i += 1) {
+    const inter = city.intersections[rangeInt(random, 0, city.intersections.length)];
+    const key = pick(random, ['sedan', 'sedan', 'taxi', 'truck', 'sports']);
+    const car = makeCar(key, inter.x, inter.y, pick(random, [0, Math.PI / 2, Math.PI, -Math.PI / 2]), pick(random, CAR_MODELS[key].colors));
+    car.isTraffic = true;
+    car.cruise = rangeInt(random, 180, 320);
+    car.route = randomRoute(random, city, car.x, car.y);
+    car.waypoint = 0;
+    cars.push(car);
+  }
+  return cars;
 }
-export function exitCar(G) {
-  const p = G.player, car = p.car;
-  if (!car) return;
-  const nx = car.x + Math.cos(car.angle + Math.PI / 2) * 44;
-  const ny = car.y + Math.sin(car.angle + Math.PI / 2) * 44;
-  p.x = nx; p.y = ny; p.angle = car.angle; p.onFoot = true; p.car = null;
-  car.driver = null; car.speed *= 0.3;
+
+function randomRoute(random, city, x, y) {
+  const target = city.intersections[rangeInt(random, 0, city.intersections.length)];
+  return city.route(x, y, target.x, target.y);
 }
-export function addWanted(G, stars, why) {
-  if (G.mission.index === 3 && G.mission.stage === 'escape') return; // getaway mission sets its own heat
-  G.wanted = clamp(G.wanted + stars, 0, 5);
-  G.heatTimer = 0;
-  if (stars > 0 && why) G.feed.push('WANTED: ' + why + '  +' + stars + ' star' + (stars > 1 ? 's' : ''));
-}
-export function driveCar(G, car, input, dt) {
-  const spec = VEHICLES[car.kind];
-  const ax = input.axis();
-  const wet = G.weather.rain > 0.4 ? 0.82 : 1;
-  const grip = spec.grip * wet;
-  if (ax.y < 0) car.speed += spec.accel * dt; // W = forward (axis y is -1 up)
-  else if (ax.y > 0) car.speed -= spec.accel * 1.4 * dt;
-  else car.speed -= Math.sign(car.speed) * 90 * dt;
-  if (input.down('Space')) { car.speed -= Math.sign(car.speed) * 420 * dt; car.handbrake = true; } else car.handbrake = false;
-  car.speed = clamp(car.speed, -spec.top * 0.45, spec.top);
-  if (Math.abs(car.speed) < 4 && ax.y === 0) car.speed = 0;
-  const steer = ax.x * (car.speed >= 0 ? 1 : -1);
-  const turnRate = grip * (car.handbrake ? 1.7 : 1) * clamp(Math.abs(car.speed) / 120, 0.25, 1);
-  car.angle += steer * turnRate * dt * (car.handbrake ? 1.15 : 1);
+
+/**
+ * One physics step for a driven car. input: { up, down, left, right, handbrake }.
+ * Returns a crash strength (0 when nothing hit) for sound and sparks.
+ */
+export function stepCar(car, input, dt, city) {
+  const m = car.model;
+  let crash = 0;
+  if (car.damageCooldown > 0) car.damageCooldown -= dt;
+  const forward = input.up ? 1 : input.down ? -0.6 : 0;
+  if (forward !== 0) {
+    const accel = forward > 0 ? m.accel : m.accel * 0.7;
+    car.speed += forward * accel * dt;
+  } else {
+    car.speed -= Math.sign(car.speed) * 260 * dt;
+    if (Math.abs(car.speed) < 12) car.speed = 0;
+  }
+  const maxSpeed = car.speed >= 0 ? m.top : m.reverse;
+  car.speed = Math.max(-m.reverse, Math.min(m.top, car.speed));
+  if (Math.abs(car.speed) > maxSpeed) car.speed = Math.sign(car.speed) * maxSpeed;
+
+  const steerInput = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+  const speedFactor = Math.min(1, Math.abs(car.speed) / 260);
+  const grip = input.handbrake ? m.grip * 0.45 : m.grip;
+  const targetSteer = steerInput * m.turn * speedFactor * (input.handbrake ? 1.35 : 1);
+  car.steer += (targetSteer - car.steer) * Math.min(1, grip * dt * 2.2);
+  car.angle += car.steer * dt * Math.sign(car.speed || 1);
+
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  const hit = collideBuildings(G.city, nx, ny, 26);
-  if (hit) {
-    if (Math.abs(car.speed) > 180) { damageCar(G, car, 12); G.audio.crash(); spawnCrash(G, car.x, car.y); }
-    car.speed *= -0.25; car.x += Math.cos(car.angle) * -8; car.y += Math.sin(car.angle) * -8;
+  const half = m.length / 2 - 4;
+  const fx = nx + Math.cos(car.angle) * half;
+  const fy = ny + Math.sin(car.angle) * half;
+  const bx = nx - Math.cos(car.angle) * half;
+  const by = ny - Math.sin(car.angle) * half;
+  const r = m.width / 2;
+  // Buildings, the world edge and the water all stop a car.
+  const hitFront = city.hitBuilding(fx, fy, r) || fx < 20 || fx > WORLD.waterX - 20 || fy < 20 || fy > WORLD.height - 20;
+  const hitBack = city.hitBuilding(bx, by, r) || bx < 20 || bx > WORLD.waterX - 20 || by < 20 || by > WORLD.height - 20;
+  if (hitFront || hitBack) {
+    crash = Math.abs(car.speed) / m.top;
+    car.speed *= -0.25;
+    // Damage is per impact, not per step: a car pushed against a wall takes
+    // one hit, then a breather, instead of dying in under a second.
+    if (crash > 0.15 && car.damageCooldown <= 0) {
+      car.health -= crash * 22;
+      car.damageCooldown = 0.5;
+    }
+    car.x = Math.max(24, Math.min(WORLD.waterX - 24, car.x));
+    car.y = Math.max(24, Math.min(WORLD.height - 24, car.y));
   } else {
-    car.x = clamp(nx, 40, WORLD - 40); car.y = clamp(ny, 40, WORLD - 40);
+    car.x = nx;
+    car.y = ny;
   }
-  // Skid marks on hard turns / handbrake.
-  if ((car.handbrake && Math.abs(car.speed) > 120) || (Math.abs(steer) > 0 && Math.abs(car.speed) > 300)) {
-    G.skids.push({ x: car.x - Math.cos(car.angle) * 20, y: car.y - Math.sin(car.angle) * 20, a: car.angle, life: 6 });
-    if (G.skids.length > 400) G.skids.shift();
-  }
-  // Damage smoke.
-  if (car.hp < car.maxHp * 0.5 && Math.random() < dt * 12) {
-    G.particles.push({ x: car.x, y: car.y - 10, vx: (Math.random() - 0.5) * 20, vy: -30, life: 0.9, max: 0.9, size: 9, color: '#888', kind: 'smoke' });
-  }
-  car.brakeLight = ax.y > 0 || input.down('Space');
+  car.brakeLight = !!input.down;
+  if (car.health < 40) car.smoke = 1;
+  if (car.health <= 0) car.dead = true;
+  return crash;
 }
-export function damageCar(G, car, dmg) {
-  car.hp -= dmg;
-  if (car.hp <= 0 && !car.dead) {
-    car.dead = true; car.speed = 0;
-    spawnCrash(G, car.x, car.y);
-    G.audio.crash();
-    if (car.driver === 'player') { G.feed.push('Your car is wrecked!'); }
+
+/** Traffic AI: follow the route, keep a lane offset, slow for the car ahead. */
+export function stepTraffic(car, dt, city, cars, playerPos, random) {
+  const rng = random || Math.random;
+  if (car.dead) return;
+  const target = car.route ? car.route[car.waypoint] : null;
+  if (!target) {
+    car.route = randomRoute(rng, city, car.x, car.y);
+    car.waypoint = 0;
+    return;
+  }
+  const dx = target.x - car.x;
+  const dy = target.y - car.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 46) {
+    car.waypoint += 1;
+    if (car.waypoint >= car.route.length) {
+      car.route = randomRoute(rng, city, car.x, car.y);
+      car.waypoint = 0;
+    }
+    return;
+  }
+  const wantAngle = Math.atan2(dy, dx);
+  const diff = angleDiff(wantAngle, car.angle);
+  // Slow down for a car directly ahead.
+  let ahead = false;
+  for (const other of cars) {
+    if (other === car || other.dead) continue;
+    const ox = other.x - car.x;
+    const oy = other.y - car.y;
+    const along = ox * Math.cos(car.angle) + oy * Math.sin(car.angle);
+    const side = Math.abs(-ox * Math.sin(car.angle) + oy * Math.cos(car.angle));
+    if (along > 0 && along < 90 && side < 40) {
+      ahead = true;
+      break;
+    }
+  }
+  const input = {
+    up: !ahead && Math.abs(diff) < 1.2,
+    down: false,
+    left: diff < -0.06,
+    right: diff > 0.06,
+    handbrake: false,
+  };
+  if (!input.up) car.speed -= Math.sign(car.speed) * 300 * dt;
+  stepCar(car, input, dt, city);
+  if (Math.abs(car.speed) < 30 && Math.abs(diff) > 0.8) car.stuck += dt;
+  else car.stuck = 0;
+  if (car.stuck > 2.5) {
+    car.angle = wantAngle;
+    car.stuck = 0;
+  }
+  // Keep traffic near the action: respawn far cars on a road by the player.
+  if (playerPos && Math.hypot(car.x - playerPos.x, car.y - playerPos.y) > 2400) {
+    const near = city.nearestRoad(playerPos.x + (rng() - 0.5) * 1400, playerPos.y + (rng() - 0.5) * 1000);
+    car.x = near.x;
+    car.y = near.y;
+    car.angle = near.angle;
+    car.speed = 0;
+    car.route = randomRoute(rng, city, car.x, car.y);
+    car.waypoint = 0;
   }
 }
-export function spawnCrash(G, x, y) {
-  for (let i = 0; i < 14; i++) {
-    G.particles.push({ x, y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.5) * 260, life: 0.7, max: 0.7, size: 4 + Math.random() * 5, color: ['#ffcf4d', '#ff7a2e', '#666'][i % 3], kind: 'spark' });
+
+/** Push overlapping cars apart; returns pairs that hit hard, for sparks and sound. */
+export function resolveCarCollisions(cars) {
+  const hits = [];
+  for (let i = 0; i < cars.length; i += 1) {
+    const a = cars[i];
+    if (a.dead) continue;
+    for (let j = i + 1; j < cars.length; j += 1) {
+      const b = cars[j];
+      if (b.dead || b.parked) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      const min = (a.model.length + b.model.length) / 2 - 14;
+      if (dist > 0 && dist < min) {
+        const push = (min - dist) / 2;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        a.x -= nx * push;
+        a.y -= ny * push;
+        b.x += nx * push;
+        b.y += ny * push;
+        const impact = Math.abs(a.speed - b.speed);
+        if (impact > 140) hits.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, strength: impact / 800 });
+        a.speed *= 0.92;
+        b.speed *= 0.92;
+        if (impact > 260 && a.damageCooldown <= 0 && b.damageCooldown <= 0) {
+          a.health -= 4;
+          b.health -= 4;
+          a.damageCooldown = 0.5;
+          b.damageCooldown = 0.5;
+        }
+      }
+    }
   }
-}
-export function updateSkids(G, dt) {
-  for (const s of G.skids) s.life -= dt;
-  G.skids = G.skids.filter((s) => s.life > 0);
+  return hits;
 }

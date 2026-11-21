@@ -1,92 +1,178 @@
-// Staged screenshot scenes (?shot=chase|street|mission|title). Each one puts
-// the live game into a real playable state — a chase, a street drive, a night
-// mission, the title — so every screenshot is a genuine render of the game
-// with several systems visible at once. Nothing here is a mock or an image.
-import { makeCar } from './vehicles.js';
-import { spawnRivals } from './combat.js';
-import { startMission } from './missions.js';
+// The screenshot scenes behind ?shot=start|drive|chase|mission. Each one plays
+// the real rules forward from a fresh world for a fixed number of steps, steered
+// by a simple driving autopilot (follow the road route to a target, brake for
+// nothing — it is dusk and the streets are empty enough), so the frame is what
+// the game really looks like and the same seed always gives the same frame.
 
-export function applyShot(G, shot) {
-  const p = G.player;
-  G.feed = [];
-  G.dialogue = null;
-  if (shot === 'chase') {
-    // Dusk rain chase: 4 stars, helicopter, roadblock, sports car at speed.
-    G.weather.time = 18.1;
-    G.weather.rain = 0.7; G.weather.rainTarget = 0.7;
-    G.screen = 'play';
-    const car = makeCar('sports', 1720, 1360, 0, { color: '#c22e2e' });
-    car.speed = 380;
-    G.cars.push(car);
-    p.car = car; p.onFoot = false; car.driver = 'player';
-    p.x = car.x; p.y = car.y; p.angle = 0;
-    G.wanted = 4;
-    for (let i = 0; i < 3; i++) {
-      const cop = makeCar('police', 1720 - 180 - i * 120, 1360 + (i % 2 ? 30 : -30), 0, { driver: 'cop' });
-      cop.speed = 360;
-      G.cars.push(cop); G.cops.push(cop);
+import { STEP } from './config.js';
+import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { addHeat } from './police.js';
+import { createWorld } from './world.js';
+
+const START_SECONDS = 6;
+const DRIVE_SECONDS = 20;
+const CHASE_SECONDS = 10;
+const MISSION_SECONDS = 4;
+const TAU = Math.PI * 2;
+
+function angleDiff(a, b) {
+  let d = (a - b) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
+/** Steering input that drives `car` toward the next waypoint of its route. */
+function driveInput(car, route, index) {
+  const target = route[Math.min(index, route.length - 1)];
+  const dx = target.x - car.x;
+  const dy = target.y - car.y;
+  const dist = Math.hypot(dx, dy);
+  const want = Math.atan2(dy, dx);
+  const diff = angleDiff(want, car.angle);
+  return {
+    diff,
+    input: {
+      // Throttle when roughly aligned — or when nearly stopped, since a car
+      // that never moves can never steer into line.
+      up: Math.abs(diff) < 1.4 || Math.abs(car.speed) < 60,
+      down: false,
+      left: diff < -0.07,
+      right: diff > 0.07,
+      handbrake: false,
+    },
+    arrived: dist < 70,
+  };
+}
+
+/**
+ * Cruise a car along a route for `seconds`, with stuck recovery: if the car
+ * crawls for over a second (wedged on a corner or boxed in by traffic), it
+ * reverses out and re-aims. The cruise caps speed and brakes for the car ahead,
+ * so the car survives the tour.
+ */
+function cruise(world, car, route, seconds) {
+  let waypoint = 0;
+  let stuckTimer = 0;
+  let reversing = 0;
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    const { input, arrived, diff } = driveInput(car, route, waypoint);
+    if (arrived && waypoint < route.length - 1) waypoint += 1;
+    let stepInput = input;
+    // Cap the cruise speed: a tour at full throttle ends in a wall.
+    if (Math.abs(car.speed) > 430) stepInput.up = false;
+    // Slow for turns: a tight radius keeps the car inside the intersection.
+    // Handbrake turns are tighter still — the car pivots instead of swinging
+    // wide into the corner building.
+    if (Math.abs(diff) > 0.5) {
+      if (Math.abs(car.speed) > 160) stepInput.up = false;
+      stepInput.handbrake = true;
     }
-    G.heli = { x: 1900, y: 1200, angle: 0.4, t: 0 };
-    const b1 = makeCar('police', 2200, 1360, Math.PI / 2, { parked: true });
-    const b2 = makeCar('police', 2290, 1360, Math.PI / 2, { parked: true });
-    G.cars.push(b1, b2);
-    G.roadblocks.push({ x: 2245, y: 1360, cars: [b1, b2], life: 40 });
-    // Traffic ahead to dodge.
-    const t1 = makeCar('taxi', 2100, 1336, 0, { traffic: true, cruise: 150 });
-    const t2 = makeCar('sedan', 1950, 1384, 0, { traffic: true, cruise: 140 });
-    G.cars.push(t1, t2);
-    G.mission.index = 5; G.mission.stage = 'go';
-    G.mission.target = { x: 2360, y: 1060, label: 'Reach Casino Sol' };
-    G.feed.push('WANTED: car theft  +2 stars', 'Roadblock ahead!', 'APD helicopter overhead!');
-    G.dialogue = { who: 'Dana Reyes', lines: ['Four stars, a chopper, and a roadblock ahead. Hold on tight.'], t: 6 };
-    G.cam.x = p.x; G.cam.y = p.y;
+    // Brake for the car directly ahead.
+    for (const other of world.state.cars) {
+      if (other === car || other.dead || other.parked) continue;
+      const ox = other.x - car.x;
+      const oy = other.y - car.y;
+      const along = ox * Math.cos(car.angle) + oy * Math.sin(car.angle);
+      const side = Math.abs(-ox * Math.sin(car.angle) + oy * Math.cos(car.angle));
+      if (along > 0 && along < 130 && side < 42) {
+        stepInput.up = false;
+        break;
+      }
+    }
+    if (Math.abs(car.speed) < 40) stuckTimer += STEP;
+    else stuckTimer = 0;
+    if (stuckTimer > 1.2) {
+      reversing = 0.9;
+      stuckTimer = 0;
+    }
+    if (reversing > 0) {
+      reversing -= STEP;
+      stepInput = { up: false, down: true, left: input.right, right: input.left, handbrake: false };
+    }
+    world.step(STEP, { ...emptyInput(), ...stepInput });
   }
-  if (shot === 'street') {
-    // Bright day street drive: taxi through downtown traffic, pedestrians,
-    // a fare offer and a stash blip on the minimap.
-    G.weather.time = 11.0;
-    G.weather.rain = 0; G.weather.rainTarget = 0;
-    G.screen = 'play';
-    const car = makeCar('taxi', 1360, 1000, 0, { color: '#e8b400' });
-    car.speed = 200;
-    G.cars.push(car);
-    p.car = car; p.onFoot = false; car.driver = 'player';
-    p.x = car.x; p.y = car.y; p.angle = 0;
-    G.wanted = 0;
-    G.fare.offer = { x: 1520, y: 1020 };
-    G.mission.index = 1; G.mission.stage = 'steal';
-    G.mission.target = { x: 2440, y: 1240, label: 'Steal the Falco GT' };
-    G.feed.push('Passenger waving — press T to take the fare', 'Stole the Azura Cab');
-    G.dialogue = { who: 'Salvo Kane', lines: ['Azura Motors has a red Falco GT out front. The owner owes me. Take it.'], t: 6 };
-    G.cam.x = p.x; G.cam.y = p.y;
+}
+
+function emptyInput() {
+  return {
+    up: false, down: false, left: false, right: false,
+    run: false, handbrake: false, shoot: false, punch: false,
+    interact: false, cycleWeapon: false, escape: false, buy: null, mouseWorld: null,
+  };
+}
+
+/**
+ * Build a fresh world and set it to the named scene; return the world and the
+ * screen to draw over it. start: title over Ocean Drive at dusk. drive: a
+ * sports car cruising downtown. chase: a three-star pursuit with a roadblock
+ * ahead. mission: on foot at the marina, the gold Aurum GT in reach and the
+ * finale mission live. A fresh world per scene keeps the simulation's closures
+ * and the rendered state the same object.
+ */
+export function stageShot(name, seed) {
+  const world = createWorld(seed, { fresh: true });
+  const state = world.state;
+  if (name !== 'drive' && name !== 'chase' && name !== 'mission') {
+    for (let i = 0; i < START_SECONDS / STEP; i += 1) world.step(STEP, emptyInput());
+    return { world, screen: SCREEN_TITLE };
   }
-  if (shot === 'mission') {
-    // Night at the Docks: the Takeover in progress, rivals and their boss,
-    // muzzle flash, health/armor pickups, 2 stars.
-    G.weather.time = 21.5;
-    G.weather.rain = 0; G.weather.rainTarget = 0;
-    G.screen = 'play';
-    p.x = 700; p.y = 2600; p.angle = 0.3; p.onFoot = true; p.car = null;
-    p.hp = 78; p.armor = 40; p.ammo = 48; p.weapon = 'pistol';
-    G.wanted = 2;
-    startMission(G, 7);
-    // Rival gunfire mid-flight for the action read.
-    G.bullets.push({ x: 760, y: 2580, vx: 500, vy: 200, life: 0.5, from: 'rival', dmg: 1 });
-    G.bullets.push({ x: 740, y: 2620, vx: 520, vy: -160, life: 0.5, from: 'rival', dmg: 1 });
-    p.muzzle = 0.2;
-    const cop = makeCar('police', 900, 2500, Math.PI, { driver: 'cop' });
-    cop.speed = 200;
-    G.cars.push(cop); G.cops.push(cop);
-    G.feed.push('MISSION 8/8 — The Takeover', 'Tide King down  +$40  +10 respect', 'WANTED: shots fired  +1 star');
-    G.cam.x = 760; G.cam.y = 2600;
+
+  if (name === 'drive') {
+    // Put the player in a blue sports car on Ocean Drive and cruise a loop of
+    // the city: south down the Strip, west through the Barrio, north downtown,
+    // and back east — mostly right turns, so the car is moving when the frame
+    // is taken, and it never strays up to the marina.
+    const car = state.cars.find((c) => c.modelKey === 'sports' && c.parked);
+    const sports = car || state.cars[0];
+    sports.x = 3700;
+    sports.y = 2400;
+    sports.angle = Math.PI / 2;
+    sports.parked = false;
+    state.player.inCar = sports;
+    sports.isPlayer = true;
+    state.player.x = sports.x;
+    state.player.y = sports.y;
+    const tour = [
+      { x: 3700, y: 2820 }, { x: 1920, y: 2820 }, { x: 1920, y: 820 },
+      { x: 3420, y: 820 }, { x: 3420, y: 2420 },
+    ];
+    cruise(world, sports, tour, DRIVE_SECONDS);
+    // A clean car for the frame: the tour's bumps are not the story.
+    sports.health = 100;
+    sports.smoke = 0;
+    return { world, screen: SCREEN_PLAY };
   }
-  if (shot === 'title') {
-    G.weather.time = 18.4;
-    G.screen = 'title';
-    // A lively city behind the title: traffic + a parked sports car.
-    const car = makeCar('sports', 1500, 1180, 0.4, { parked: true, color: '#c22e2e' });
-    G.cars.push(car);
-    p.x = 1500; p.y = 1200; p.angle = 0;
-    G.cam.x = 1550; G.cam.y = 1250;
+
+  if (name === 'chase') {
+    const car = state.cars.find((c) => c.modelKey === 'sports' && c.parked);
+    const sports = car || state.cars[0];
+    sports.x = 2420;
+    sports.y = 2000;
+    sports.angle = -Math.PI / 2;
+    sports.parked = false;
+    state.player.inCar = sports;
+    sports.isPlayer = true;
+    state.player.x = sports.x;
+    state.player.y = sports.y;
+    addHeat(state.police, 3);
+    state.police.roadblockTimer = 0;
+    const route = state.city.route(sports.x, sports.y, 2420, 420);
+    cruise(world, sports, route, CHASE_SECONDS);
+    // Battered, not dead: the chase is still on in the frame.
+    sports.health = Math.max(sports.health, 55);
+    sports.smoke = 0;
+    return { world, screen: SCREEN_PLAY };
   }
+
+  // mission: on foot at the marina, finale live, gold car gleaming.
+  world.beginMission(5);
+  state.player.x = 3880;
+  state.player.y = 620;
+  state.player.angle = Math.PI / 4;
+  state.player.weapon = 'pistol';
+  addHeat(state.police, 1);
+  for (let i = 0; i < MISSION_SECONDS / STEP; i += 1) world.step(STEP, emptyInput());
+  return { world, screen: SCREEN_PLAY };
 }
