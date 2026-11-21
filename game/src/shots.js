@@ -1,127 +1,92 @@
-// Staged screenshots for Solmar Bay. ?shot=chase|street|mission|title with
-// an optional ?seed=N builds a deterministic scene, lets it settle for a
-// few frames, then sets window.__shotReady so the capture driver knows the
-// frame is composed. Nothing here changes normal play: without ?shot the
-// game just starts on the title screen.
-import { WORLD } from './config.js';
+// Staged screenshot scenes (?shot=chase|street|mission|title). Each one puts
+// the live game into a real playable state — a chase, a street drive, a night
+// mission, the title — so every screenshot is a genuine render of the game
+// with several systems visible at once. Nothing here is a mock or an image.
 import { makeCar } from './vehicles.js';
-import { makeRival } from './combat.js';
+import { spawnRivals } from './combat.js';
 import { startMission } from './missions.js';
-import { spawnRoadblock, setWanted } from './police.js';
 
-export function parseShotQuery() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    shot: params.get('shot'),
-    seed: Number(params.get('seed') || 7),
-  };
-}
-
-// Place the player in a car at a position, facing an angle.
-function putPlayerInCar(state, kind, x, y, angle) {
-  const car = makeCar(kind, x, y, angle, { parked: false });
-  car.speed = 0;
-  state.cars.push(car);
-  const p = state.player;
-  p.x = x;
-  p.y = y;
-  p.angle = angle;
-  p.inCar = car;
-  p.hp = 100;
-  state.camera.x = x;
-  state.camera.y = y;
-  return car;
-}
-
-export function setupShot(state, shot, seed) {
-  const rng = state.rng;
-  const p = state.player;
-  state.screen = 'playing';
-  state.shotMode = shot;
-  state.shotFrames = 0;
-  if (shot === 'title') {
-    state.screen = 'title';
-    return;
-  }
+export function applyShot(G, shot) {
+  const p = G.player;
+  G.feed = [];
+  G.dialogue = null;
   if (shot === 'chase') {
-    // 4-star dusk chase: red sports car at speed, cops behind, roadblock ahead.
-    const car = putPlayerInCar(state, 'sports', 1400, 1400, 0);
-    car.speed = 520;
-    car.color = '#d23b2e';
-    setWanted(state, 4);
-    // Two cops closing in behind.
-    for (const [dx, dy] of [[-260, 40], [-330, -30]]) {
-      const cop = makeCar('police', 1400 + dx, 1400 + dy, 0, { traffic: false });
-      cop.wanted = true;
-      cop.speed = 480;
-      state.cops.push(cop);
-      state.cars.push(cop);
+    // Dusk rain chase: 4 stars, helicopter, roadblock, sports car at speed.
+    G.weather.time = 18.1;
+    G.weather.rain = 0.7; G.weather.rainTarget = 0.7;
+    G.screen = 'play';
+    const car = makeCar('sports', 1720, 1360, 0, { color: '#c22e2e' });
+    car.speed = 380;
+    G.cars.push(car);
+    p.car = car; p.onFoot = false; car.driver = 'player';
+    p.x = car.x; p.y = car.y; p.angle = 0;
+    G.wanted = 4;
+    for (let i = 0; i < 3; i++) {
+      const cop = makeCar('police', 1720 - 180 - i * 120, 1360 + (i % 2 ? 30 : -30), 0, { driver: 'cop' });
+      cop.speed = 360;
+      G.cars.push(cop); G.cops.push(cop);
     }
-    // Roadblock ahead on the same road.
-    spawnRoadblock(state, rng);
-    // A couple of traffic cars to dodge.
-    const t1 = makeCar('sedan', 1750, 1384, 0, { traffic: true, roadAxis: 'h', roadLine: 1400, dir: 1 });
-    t1.speed = 150;
-    const t2 = makeCar('taxi', 1900, 1416, Math.PI, { traffic: true, roadAxis: 'h', roadLine: 1400, dir: -1 });
-    t2.speed = 160;
-    state.cars.push(t1, t2);
-    state.camera.x = 1500;
-    state.camera.y = 1400;
-    state.mission.stepText = 'Lose the cops — 4 stars';
-    return;
+    G.heli = { x: 1900, y: 1200, angle: 0.4, t: 0 };
+    const b1 = makeCar('police', 2200, 1360, Math.PI / 2, { parked: true });
+    const b2 = makeCar('police', 2290, 1360, Math.PI / 2, { parked: true });
+    G.cars.push(b1, b2);
+    G.roadblocks.push({ x: 2245, y: 1360, cars: [b1, b2], life: 40 });
+    // Traffic ahead to dodge.
+    const t1 = makeCar('taxi', 2100, 1336, 0, { traffic: true, cruise: 150 });
+    const t2 = makeCar('sedan', 1950, 1384, 0, { traffic: true, cruise: 140 });
+    G.cars.push(t1, t2);
+    G.mission.index = 5; G.mission.stage = 'go';
+    G.mission.target = { x: 2360, y: 1060, label: 'Reach Casino Sol' };
+    G.feed.push('WANTED: car theft  +2 stars', 'Roadblock ahead!', 'APD helicopter overhead!');
+    G.dialogue = { who: 'Dana Reyes', lines: ['Four stars, a chopper, and a roadblock ahead. Hold on tight.'], t: 6 };
+    G.cam.x = p.x; G.cam.y = p.y;
   }
   if (shot === 'street') {
-    // Player on foot by the downtown parking-garage stash (spot 9): a blue
-    // sports car, a taxi on the road, peds on the sidewalk, chest in view.
-    p.x = 1080;
-    p.y = 1160;
-    p.angle = -Math.PI / 2;
-    p.inCar = null;
-    const car = makeCar('sports', 1140, 1180, Math.PI / 2, { parked: true });
-    car.color = '#2e6fd2';
-    state.cars.push(car);
-    const taxi = makeCar('taxi', 1300, 1016, 0, { traffic: true, roadAxis: 'h', roadLine: 1000, dir: 1 });
-    taxi.speed = 120;
-    state.cars.push(taxi);
-    // A few peds strolling the sidewalk.
-    for (const ped of state.peds.slice(0, 6)) {
-      ped.x = 1020 + Math.random() * 160;
-      ped.y = 1100 + Math.random() * 90;
-    }
-    state.camera.x = 1080;
-    state.camera.y = 1120;
-    state.mission.stepText = 'Pick up the package at the blue marker';
-    return;
+    // Bright day street drive: taxi through downtown traffic, pedestrians,
+    // a fare offer and a stash blip on the minimap.
+    G.weather.time = 11.0;
+    G.weather.rain = 0; G.weather.rainTarget = 0;
+    G.screen = 'play';
+    const car = makeCar('taxi', 1360, 1000, 0, { color: '#e8b400' });
+    car.speed = 200;
+    G.cars.push(car);
+    p.car = car; p.onFoot = false; car.driver = 'player';
+    p.x = car.x; p.y = car.y; p.angle = 0;
+    G.wanted = 0;
+    G.fare.offer = { x: 1520, y: 1020 };
+    G.mission.index = 1; G.mission.stage = 'steal';
+    G.mission.target = { x: 2440, y: 1240, label: 'Steal the Falco GT' };
+    G.feed.push('Passenger waving — press T to take the fare', 'Stole the Azura Cab');
+    G.dialogue = { who: 'Salvo Kane', lines: ['Azura Motors has a red Falco GT out front. The owner owes me. Take it.'], t: 6 };
+    G.cam.x = p.x; G.cam.y = p.y;
   }
   if (shot === 'mission') {
-    // The finale at the docks: rivals, lieutenants gold-ringed, player
-    // on foot with the objective live.
-    startMission(state, 5);
-    p.x = 520;
-    p.y = 760;
-    p.angle = -Math.PI / 2;
-    p.inCar = null;
-    // Muzzle flash + a couple of sparks for action.
-    state.muzzle = { x: 560, y: 700, t: 0.09, angle: -Math.PI / 2 };
-    state.spawnSparks(560, 700, 8, '#ffd76a');
-    state.camera.x = 560;
-    state.camera.y = 520;
-    return;
+    // Night at the Docks: the Takeover in progress, rivals and their boss,
+    // muzzle flash, health/armor pickups, 2 stars.
+    G.weather.time = 21.5;
+    G.weather.rain = 0; G.weather.rainTarget = 0;
+    G.screen = 'play';
+    p.x = 700; p.y = 2600; p.angle = 0.3; p.onFoot = true; p.car = null;
+    p.hp = 78; p.armor = 40; p.ammo = 48; p.weapon = 'pistol';
+    G.wanted = 2;
+    startMission(G, 7);
+    // Rival gunfire mid-flight for the action read.
+    G.bullets.push({ x: 760, y: 2580, vx: 500, vy: 200, life: 0.5, from: 'rival', dmg: 1 });
+    G.bullets.push({ x: 740, y: 2620, vx: 520, vy: -160, life: 0.5, from: 'rival', dmg: 1 });
+    p.muzzle = 0.2;
+    const cop = makeCar('police', 900, 2500, Math.PI, { driver: 'cop' });
+    cop.speed = 200;
+    G.cars.push(cop); G.cops.push(cop);
+    G.feed.push('MISSION 8/8 — The Takeover', 'Tide King down  +$40  +10 respect', 'WANTED: shots fired  +1 star');
+    G.cam.x = 760; G.cam.y = 2600;
   }
-  // Unknown shot: fall back to the title screen.
-  state.screen = 'title';
-}
-
-// Called once per frame while a shot is staged. After the scene has had a
-// few frames to settle (particles, sirens, camera), flag readiness.
-export function updateShot(state) {
-  if (!state.shotMode) return;
-  state.shotFrames += 1;
-  if (state.shotMode === 'chase' && state.shotFrames === 2) {
-    // Keep the chase moving so skid/speed reads in the frame.
-    if (state.player.inCar) state.player.inCar.speed = 520;
-  }
-  if (state.shotFrames >= 12 && !window.__shotReady) {
-    window.__shotReady = true;
+  if (shot === 'title') {
+    G.weather.time = 18.4;
+    G.screen = 'title';
+    // A lively city behind the title: traffic + a parked sports car.
+    const car = makeCar('sports', 1500, 1180, 0.4, { parked: true, color: '#c22e2e' });
+    G.cars.push(car);
+    p.x = 1500; p.y = 1200; p.angle = 0;
+    G.cam.x = 1550; G.cam.y = 1250;
   }
 }

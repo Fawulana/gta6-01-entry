@@ -1,50 +1,30 @@
-// localStorage save for Solmar Bay. Small and versioned: missions done,
-// cash, stashes found and best race time. Loading never throws — a corrupt
-// or missing save just means a fresh start.
-import { SAVE_KEY } from './config.js';
-
-export function blankSave() {
-  return {
-    version: 1,
-    missionsDone: 0,
-    cash: 0,
-    stashes: [], // indices into STASH_SPOTS
-    bestRace: null, // seconds, lower is better
-    storyDone: false,
-  };
-}
-
-export function loadSave() {
+// Save / load: progress (missions, cash, respect, stashes, best race time,
+// weapon, ammo) persists in localStorage. Loading is best-effort — a bad or
+// missing save just starts a fresh game.
+const KEY = 'port-azura-save-v1';
+export function saveGame(G) {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return blankSave();
-    const data = JSON.parse(raw);
-    if (!data || typeof data !== 'object') return blankSave();
-    const save = blankSave();
-    if (Number.isFinite(data.missionsDone)) save.missionsDone = Math.max(0, Math.min(6, Math.floor(data.missionsDone)));
-    if (Number.isFinite(data.cash)) save.cash = Math.max(0, Math.floor(data.cash));
-    if (Array.isArray(data.stashes)) save.stashes = data.stashes.filter((i) => Number.isInteger(i) && i >= 0 && i < 10);
-    if (Number.isFinite(data.bestRace)) save.bestRace = data.bestRace;
-    save.storyDone = data.storyDone === true;
-    return save;
-  } catch {
-    return blankSave();
-  }
+    const p = G.player;
+    const data = {
+      missionIndex: Math.min(G.mission.index, 8),
+      cash: Math.floor(p.cash), respect: p.respect, ammo: p.ammo,
+      weapon: p.weapon, hasShotgun: !!p.hasShotgun, bestRace: p.bestRace || null,
+      stashes: G.chests.map((c) => c.found),
+      time: G.weather.time,
+    };
+    localStorage.setItem(KEY, JSON.stringify(data));
+    G.saveDirty = false;
+  } catch { /* storage unavailable — play on without saving */ }
 }
-
-export function writeSave(save) {
+export function loadGame() {
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-    return true;
-  } catch {
-    return false;
-  }
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (typeof d !== 'object' || d === null) return null;
+    return d;
+  } catch { return null; }
 }
-
 export function clearSave() {
-  try {
-    window.localStorage.removeItem(SAVE_KEY);
-  } catch {
-    // storage unavailable: nothing to clear
-  }
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
 }

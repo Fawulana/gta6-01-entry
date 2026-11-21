@@ -1,146 +1,117 @@
-// Solmar Bay city layout: a 3200x3200 grid city with a downtown tower
-// core, palm beach and water to the south, a marina and pier to the east,
-// docks to the north-west and Auto Row to the north-east. Generation is
-// deterministic from a seed: the same seed builds the same city.
-// Everything here is placement data; render.js draws it.
-import { WORLD, ROAD_LINES, ROAD_W, DISTRICTS, PARKS, BEACH, MARINA, PIER } from './config.js';
-import { makeRng as rngFactory, range as rngRange, pick as rngPick, chance as rngChance, intRange as rngInt } from './random.js';
+// Port Azura city layout: road grid, buildings, beach and water, marina, park,
+// and every named place missions and side activities point at. Built once from
+// a seed; the world never changes shape during a session.
+import { ROADS, ROAD_W, WORLD, DISTRICTS, COLORS } from './config.js';
+import { makeRng } from './random.js';
 
-const BUILDING_COLORS = ['#b9a98c', '#a8b0b8', '#c2b49a', '#9fb2c0', '#b5a48f', '#8f9aa5', '#cbb98d'];
-const TOWER_COLORS = ['#6f7d8c', '#7d8a99', '#5d6b7a', '#8a7f6d', '#74808e'];
-const PALETTE_GROUND = '#7e7a6e';
+export function buildCity(seed) {
+  const rng = makeRng(seed);
+  const buildings = [];
+  const trees = [];
+  const umbrellas = [];
+  const palette = ['#7a6a58', '#5d6b7d', '#8a7a5a', '#6b5a6b', '#4f6b5d', '#9a8a72', '#5a5a6b', '#a08a6a'];
+  const towerPalette = ['#3d4a63', '#4a3d5e', '#2f4a4a', '#5e4632'];
+  // Buildings fill each block between roads.
+  for (let i = 0; i < ROADS.length - 1; i++) {
+    for (let j = 0; j < ROADS.length - 1; j++) {
+      const x0 = ROADS[i] + ROAD_W / 2 + 14, y0 = ROADS[j] + ROAD_W / 2 + 14;
+      const x1 = ROADS[i + 1] - ROAD_W / 2 - 14, y1 = ROADS[j + 1] - ROAD_W / 2 - 14;
+      if (x1 - x0 < 90 || y1 - y0 < 90) continue;
+      // Beach strip: no buildings east of the last road.
+      if (x0 > 3160) continue;
+      // Central park block.
+      if (i === 4 && j === 4) {
+        for (let t = 0; t < 26; t++) trees.push({ x: rng.range(x0, x1), y: rng.range(y0, y1), r: rng.range(9, 16) });
+        continue;
+      }
+      const downtown = i >= 3 && i <= 5 && j >= 2 && j <= 4;
+      const n = downtown ? rng.int(1, 2) : rng.int(2, 4);
+      for (let k = 0; k < n; k++) {
+        const w = rng.range(70, Math.min(200, x1 - x0 - 20));
+        const h = rng.range(70, Math.min(200, y1 - y0 - 20));
+        const x = rng.range(x0, x1 - w), y = rng.range(y0, y1 - h);
+        const tall = downtown && rng.chance(0.55);
+        buildings.push({
+          x, y, w, h, tall,
+          color: tall ? rng.pick(towerPalette) : rng.pick(palette),
+          hgt: tall ? rng.range(90, 170) : rng.range(18, 46),
+          roof: rng.pick(['#3a3a3a', '#54423a', '#2f3a2f', '#4a4a4a']),
+        });
+      }
+      if (rng.chance(0.6)) trees.push({ x: rng.range(x0, x1), y: rng.range(y0, y1), r: rng.range(8, 14) });
+    }
+  }
+  // Palm-lined beach east of the last road, umbrellas and a pier.
+  for (let y = 420; y < 3200; y += 130) {
+    trees.push({ x: rng.range(3220, 3300), y: y + rng.range(-30, 30), r: 13, palm: true });
+    if (rng.chance(0.7)) umbrellas.push({ x: rng.range(3240, 3380), y: y + rng.range(0, 90), color: rng.pick(['#e86a5a', '#f2d24b', '#4ba3e8', '#e84ba3']) });
+  }
+  const places = {
+    safehouse: { x: 1180, y: 1560, label: 'SAFEHOUSE' },
+    fixer: { x: 860, y: 860, label: 'SALVO\'S BAR' },
+    dealership: { x: 2360, y: 1180, label: 'AZURA MOTORS' },
+    gunstore: { x: 1560, y: 640, label: 'IRONWORKS GUNS' },
+    diner: { x: 1180, y: 2360, label: 'NEON DINER' },
+    casino: { x: 2360, y: 1060, label: 'CASINO SOL' },
+    docks: { x: 560, y: 2680, label: 'THE DOCKS' },
+    pier: { x: 3360, y: 1500, label: 'PIER 9' },
+    market: { x: 1720, y: 560, label: 'MARKET ROW' },
+    park: { x: 1900, y: 1900, label: 'AZURA PARK' },
+    airport: { x: 2620, y: 2820, label: 'AZURA AIRFIELD' },
+    hospital: { x: 2080, y: 2080, label: 'ST. MARA HOSPITAL' },
+  };
+  // Props: boats in the marina, benches in the park, neon signs on the Strip,
+  // crates stacked at the Docks, fuel pumps at the gas station on Airport Rd.
+  const boats = [];
+  for (let i = 0; i < 6; i++) {
+    boats.push({ x: 320 + i * 130, y: 3360 + (i % 2) * 90, len: 90 + rng.range(0, 40), color: rng.pick(['#ddd', '#c22e2e', '#2e6bc2', '#e8b400']) });
+  }
+  const benches = [];
+  for (let i = 0; i < 8; i++) benches.push({ x: rng.range(1780, 2020), y: rng.range(1780, 2020) });
+  const neons = [
+    { x: 2360, y: 1000, text: 'CASINO SOL', color: '#ff4dd2' },
+    { x: 1180, y: 2300, text: 'NEON DINER', color: '#4dd2ff' },
+    { x: 860, y: 800, text: 'RUSTY ANCHOR', color: '#ffd24b' },
+    { x: 2360, y: 1120, text: 'AZURA MOTORS', color: '#7dff8a' },
+  ];
+  const crates = [];
+  for (let i = 0; i < 14; i++) crates.push({ x: 380 + rng.range(0, 340), y: 2520 + rng.range(0, 300), s: rng.range(18, 30) });
+  const pumps = [{ x: 2620, y: 2700 }, { x: 2660, y: 2700 }, { x: 2700, y: 2700 }];
+  // Bus stops on the downtown loop: the Azura City Bus runs this circuit.
+  const busStops = [
+    { x: 1000, y: 1000, name: 'DOWNTOWN' },
+    { x: 2800, y: 1000, name: 'CASINO STRIP' },
+    { x: 2800, y: 2440, name: 'AIRPORT RD' },
+    { x: 1000, y: 2440, name: 'HILLCREST' },
+  ];
+  return { buildings, trees, umbrellas, places, boats, benches, neons, crates, pumps, busStops, rng };
+}
 
-export function isOnRoad(x, y) {
-  for (const line of ROAD_LINES) {
-    if (Math.abs(x - line) <= ROAD_W / 2) return true;
-    if (Math.abs(y - line) <= ROAD_W / 2) return true;
+export function nearestRoad(x, y) {
+  let best = ROADS[0], bd = 1e9;
+  for (const r of ROADS) { const d = Math.min(Math.abs(x - r), Math.abs(y - r)); if (d < bd) { bd = d; best = r; } }
+  return { road: best, dist: bd, vertical: Math.abs(x - best) <= Math.abs(y - best) };
+}
+export function onRoad(x, y) {
+  for (const r of ROADS) {
+    if (Math.abs(x - r) < ROAD_W / 2 + 8 && y > 180 && y < WORLD - 120) return true;
+    if (Math.abs(y - r) < ROAD_W / 2 + 8 && x > 180 && x < WORLD - 120) return true;
   }
   return false;
 }
-
-// True when the point is on a road centre line's lane (for traffic paths).
-export function nearestRoadLine(v) {
-  let best = ROAD_LINES[0];
-  let bestD = Infinity;
-  for (const line of ROAD_LINES) {
-    const d = Math.abs(v - line);
-    if (d < bestD) {
-      bestD = d;
-      best = line;
-    }
+export function collideBuildings(city, x, y, r) {
+  for (const b of city.buildings) {
+    if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return b;
   }
-  return best;
-}
-
-export function inBeach(x, y) {
-  return y >= BEACH.y0 && y < 3080 && x < 3052;
-}
-export function inWater(x, y) {
-  return (y >= 3080) || (x >= MARINA.x0 && y >= MARINA.y0 && y <= MARINA.y1);
-}
-export function inPark(x, y) {
-  return PARKS.some((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
+  return null;
 }
 export function districtAt(x, y) {
-  let best = null;
-  let bestD = Infinity;
-  for (const d of DISTRICTS) {
-    const dx = x - d.x;
-    const dy = y - d.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < bestD) {
-      bestD = dist;
-      best = d;
-    }
-  }
-  return bestD <= best.r ? best : null;
+  for (const d of DISTRICTS) if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d.name;
+  return 'PORT AZURA';
 }
-
-export function buildCity(seed) {
-  const rng = rngFactory(seed);
-  const buildings = [];
-  const palms = [];
-  const trees = [];
-  const umbrellas = [];
-  const crates = [];
-  const lamps = [];
-
-  // One block = the square between four road lines. Skip blocks that are
-  // beach, water, marina or park; fill the rest with buildings.
-  for (let ix = 0; ix < ROAD_LINES.length - 1; ix += 1) {
-    for (let iy = 0; iy < ROAD_LINES.length - 1; iy += 1) {
-      const x0 = ROAD_LINES[ix] + ROAD_W / 2 + 12;
-      const y0 = ROAD_LINES[iy] + ROAD_W / 2 + 12;
-      const x1 = ROAD_LINES[ix + 1] - ROAD_W / 2 - 12;
-      const y1 = ROAD_LINES[iy + 1] - ROAD_W / 2 - 12;
-      const cx = (x0 + x1) / 2;
-      const cy = (y0 + y1) / 2;
-      if (cy > BEACH.y0 - 40) continue; // beach band
-      if (cx > MARINA.x0 - 40 && cy > MARINA.y0 - 40 && cy < MARINA.y1 + 40) continue; // marina
-      if (PARKS.some((p) => cx > p.x && cx < p.x + p.w && cy > p.y && cy < p.y + p.h)) {
-        for (let t = 0; t < 9; t += 1) {
-          trees.push({ x: rngRange(rng, x0 + 20, x1 - 20), y: rngRange(rng, y0 + 20, y1 - 20), r: rngRange(rng, 12, 20) });
-        }
-        continue;
-      }
-      const downtown = Math.abs(cx - 1600) < 700 && Math.abs(cy - 1600) < 700;
-      const docks = cx < 900 && cy < 700;
-      const count = downtown ? rngInt(rng, 1, 2) : rngInt(rng, 2, 4);
-      for (let b = 0; b < count; b += 1) {
-        const w = downtown ? rngRange(rng, 90, 170) : rngRange(rng, 60, 130);
-        const h = downtown ? rngRange(rng, 90, 170) : rngRange(rng, 50, 110);
-        const bx = rngRange(rng, x0, Math.max(x0 + 1, x1 - w));
-        const by = rngRange(rng, y0, Math.max(y0 + 1, y1 - h));
-        const hgt = downtown ? rngRange(rng, 55, 150) : rngRange(rng, 14, 42);
-        buildings.push({
-          x: bx, y: by, w, h, hgt,
-          color: downtown ? rngPick(rng, TOWER_COLORS) : rngPick(rng, BUILDING_COLORS),
-          roof: rngChance(rng, 0.4),
-          downtown,
-        });
-      }
-      if (docks) {
-        for (let c = 0; c < 4; c += 1) {
-          crates.push({ x: rngRange(rng, x0 + 10, x1 - 30), y: rngRange(rng, y0 + 10, y1 - 30), s: rngRange(rng, 18, 30), color: rngPick(rng, ['#a5672e', '#7a8a3a', '#5d7a8a', '#96603a']) });
-        }
-      }
-    }
-  }
-
-  // Palm-lined beach: two rows of palms along the sand + umbrellas.
-  for (let x = 160; x < WORLD - 160; x += 130) {
-    palms.push({ x: x + rngRange(rng, -20, 20), y: 2940 + rngRange(rng, -8, 8) });
-    if (rngChance(rng, 0.55)) palms.push({ x: x + 60 + rngRange(rng, -15, 15), y: 3010 + rngRange(rng, -8, 8) });
-    if (rngChance(rng, 0.5)) {
-      umbrellas.push({ x: x + rngRange(rng, -30, 30), y: 2990 + rngRange(rng, -20, 20), color: rngPick(rng, ['#e2574c', '#f2c230', '#4a90c2', '#e88bb0']) });
-    }
-  }
-  // Palms along the marina front and downtown boulevard.
-  for (let y = 700; y < 2500; y += 160) {
-    palms.push({ x: 2980 + rngRange(rng, -10, 10), y });
-  }
-  for (let x = 700; x < 2500; x += 200) {
-    palms.push({ x, y: 1380 + rngRange(rng, -8, 8) });
-  }
-
-  // Street lamps at every intersection corner.
-  for (const lx of ROAD_LINES) {
-    for (const ly of ROAD_LINES) {
-      lamps.push({ x: lx + ROAD_W / 2 + 6, y: ly + ROAD_W / 2 + 6 });
-    }
-  }
-
-  // Crosswalks: zebra stripes at every intersection, on both axes.
-  const crosswalks = [];
-  for (const lx of ROAD_LINES) {
-    for (const ly of ROAD_LINES) {
-      crosswalks.push({ x: lx, y: ly });
-    }
-  }
-
-  return {
-    buildings, palms, trees, umbrellas, crates, lamps, crosswalks,
-    ground: PALETTE_GROUND,
-    seed,
-  };
+export function randomRoadPoint(rng) {
+  const vertical = rng.chance(0.5);
+  const road = rng.pick(ROADS);
+  const along = rng.range(260, WORLD - 260);
+  return vertical ? { x: road, y: along } : { x: along, y: road };
 }

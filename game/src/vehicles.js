@@ -1,168 +1,116 @@
-// Vehicles for Solmar Bay: kinds, spawning and arcade driving physics.
-// A car is a plain object; the physics here are deliberately simple and
-// forgiving — accelerate, steer harder at low speed, drift on the handbrake
-// — so driving feels good with a keyboard.
-import { VEHICLE_KINDS, WORLD, ROAD_LINES, LANE } from './config.js';
-import { makeRng, range, pick, intRange } from './random.js';
+// Vehicles: spawning, driving physics, entering/exiting, damage, skid marks
+// and smoke. Eight kinds with distinct top speed, acceleration and grip —
+// the Wasp bike is fastest and loosest, the Bison truck slowest and toughest.
+import { VEHICLES, WORLD } from './config.js';
+import { clamp, dist, wrapAngle, angleDiff } from './random.js';
+import { collideBuildings, onRoad } from './city.js';
 
-let nextCarId = 1;
-
-export function makeCar(kindName, x, y, angle, opts = {}) {
-  const kind = VEHICLE_KINDS[kindName];
+let nextId = 1;
+export function makeCar(kind, x, y, angle, opts = {}) {
+  const spec = VEHICLES[kind];
   return {
-    id: nextCarId,
-    kind: kindName,
-    label: kind.label,
-    color: opts.color || kind.color,
-    dark: kind.dark,
-    len: kind.len,
-    wid: kind.wid,
-    x, y,
-    angle, // radians, 0 = east
-    speed: 0,
-    maxSpeed: kind.maxSpeed,
-    accel: kind.accel,
-    grip: kind.grip,
-    hp: opts.hp ?? kind.hp,
-    maxHp: opts.hp ?? kind.hp,
-    cruise: kind.cruise,
-    traffic: opts.traffic ?? false, // true = AI traffic car
-    parked: opts.parked ?? false,
-    roadAxis: opts.roadAxis || 'h', // 'h' drives along x, 'v' along y
-    roadLine: opts.roadLine ?? 0,
-    dir: opts.dir ?? 1, // +1 or -1 along the road
-    turnCooldown: 0,
-    wanted: false, // police car on duty
-    gold: kindName === 'comet' && opts.gold === true,
-    dead: false,
+    id: nextId++, kind, x, y, angle: angle ?? 0, speed: 0,
+    color: opts.color || spec.color, hp: spec.hp, maxHp: spec.hp,
+    traffic: !!opts.traffic, parked: !!opts.parked, police: kind === 'police',
+    driver: opts.driver || null, brakeLight: false, dead: false,
+    turnTarget: null, lane: opts.lane || 0, cruise: opts.cruise || 0,
   };
 }
-
-// A random traffic kind, weighted so sedans and taxis dominate the streets.
-export function randomTrafficKind(rng) {
-  const r = rng();
-  if (r < 0.34) return 'sedan';
-  if (r < 0.52) return 'taxi';
-  if (r < 0.68) return 'van';
-  if (r < 0.84) return 'sports';
-  return 'truck';
+export function spawnParkedCars(G, rng) {
+  const spots = [];
+  for (let i = 0; i < 26; i++) {
+    const p = { x: 0, y: 0 };
+    const vertical = rng.chance(0.5);
+    const road = rng.pick([280, 640, 1000, 1360, 1720, 2080, 2440, 2800]);
+    const along = rng.range(300, 3200);
+    if (vertical) { p.x = road + (rng.chance(0.5) ? 62 : -62); p.y = along; }
+    else { p.y = road + (rng.chance(0.5) ? 62 : -62); p.x = along; }
+    if (dist(p.x, p.y, G.player.x, G.player.y) < 500) continue;
+    const kind = rng.pick(['sedan', 'sedan', 'sports', 'truck', 'van', 'taxi', 'bike']);
+    G.cars.push(makeCar(kind, p.x, p.y, vertical ? (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2) : (rng.chance(0.5) ? 0 : Math.PI), { parked: true }));
+    spots.push(p);
+  }
+  return spots;
 }
-
-export function randomCarColor(rng, kindName) {
-  const palette = {
-    sedan: ['#4a7fb5', '#7a4a8a', '#3f8a5f', '#b5b0a8', '#c25a3a'],
-    sports: ['#d23b2e', '#e8b73a', '#2e6fd2', '#e8e8e8', '#222831'],
-    truck: ['#c98a2e', '#7d8a99', '#8a5c2e'],
-    van: ['#7d8a99', '#b5b0a8', '#4a6b8a'],
-    taxi: ['#f2c230'],
-    police: ['#1e2a38'],
-    comet: ['#e8b73a'],
-  };
-  const list = palette[kindName] || ['#888888'];
-  return list[Math.floor(rng() * list.length)];
+export function nearestCar(G, x, y, maxD) {
+  let best = null, bd = maxD;
+  for (const c of G.cars) {
+    if (c.dead || c.traffic) continue;
+    const d = dist(x, y, c.x, c.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
 }
-
-// Spawn a traffic car on a random road, in a lane, moving with the flow.
-export function spawnTrafficCar(rng, margin = 0) {
-  const axis = rng() < 0.5 ? 'h' : 'v';
-  const line = pick(rng, ROAD_LINES);
-  const dir = rng() < 0.5 ? 1 : -1;
-  const laneOff = LANE * (axis === 'h' ? dir : dir);
-  let x;
-  let y;
-  let angle;
-  if (axis === 'h') {
-    x = range(rng, 100, WORLD - 100);
-    y = line + (dir > 0 ? LANE : -LANE);
-    angle = dir > 0 ? 0 : Math.PI;
-  } else {
-    x = line + (dir > 0 ? -LANE : LANE);
-    y = range(rng, 100, WORLD - 100);
-    angle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-  }
-  const kindName = randomTrafficKind(rng);
-  const car = makeCar(kindName, x, y, angle, {
-    traffic: true,
-    roadAxis: axis,
-    roadLine: line,
-    dir,
-    color: randomCarColor(rng, kindName),
-  });
-  car.speed = car.cruise * range(rng, 0.8, 1.1);
-  return car;
+export function enterCar(G, car) {
+  const p = G.player;
+  p.car = car; p.onFoot = false; car.parked = false; car.driver = 'player';
+  G.audio.unlock(); G.audio.radio();
+  G.feed.push('Stole the ' + VEHICLES[car.kind].name);
+  if (car.kind !== 'police' && G.wanted < 1 && Math.random() < 0.55) addWanted(G, 1, 'car theft');
 }
-
-// --- Driving physics -------------------------------------------------------
-// dt seconds, throttle -1..1, steer -1..1, handbrake bool. Returns events
-// the caller may react to: { skidding, bumped }.
-export function driveCar(car, dt, throttle, steer, handbrake, state) {
-  const events = { skidding: false, bumped: false };
-  const speed = car.speed;
-  if (throttle > 0) {
-    car.speed += car.accel * throttle * dt;
-  } else if (throttle < 0) {
-    // Brake, then reverse slowly.
-    if (speed > 10) car.speed += car.accel * 1.6 * throttle * dt;
-    else car.speed += car.accel * 0.45 * throttle * dt;
-  } else {
-    car.speed -= Math.sign(speed) * 60 * dt;
-    if (Math.abs(car.speed) < 8) car.speed = 0;
-  }
-  // Rolling drag.
-  car.speed -= car.speed * 0.25 * dt;
-  const maxFwd = car.maxSpeed;
-  const maxRev = 140;
-  if (car.speed > maxFwd) car.speed = maxFwd;
-  if (car.speed < -maxRev) car.speed = -maxRev;
-
-  const speedFactor = Math.min(1, Math.abs(speed) / 220);
-  const steerRate = car.grip * (handbrake ? 1.7 : 1) * (0.55 + 0.45 * speedFactor);
-  if (speed !== 0) {
-    car.angle += steer * steerRate * dt * Math.sign(speed);
-  }
-  events.skidding = handbrake && Math.abs(speed) > 120;
-  if (events.skidding) {
-    // Drift: the car slides sideways a touch and loses grip.
-    car.speed -= car.speed * 0.5 * dt;
-  }
+export function exitCar(G) {
+  const p = G.player, car = p.car;
+  if (!car) return;
+  const nx = car.x + Math.cos(car.angle + Math.PI / 2) * 44;
+  const ny = car.y + Math.sin(car.angle + Math.PI / 2) * 44;
+  p.x = nx; p.y = ny; p.angle = car.angle; p.onFoot = true; p.car = null;
+  car.driver = null; car.speed *= 0.3;
+}
+export function addWanted(G, stars, why) {
+  if (G.mission.index === 3 && G.mission.stage === 'escape') return; // getaway mission sets its own heat
+  G.wanted = clamp(G.wanted + stars, 0, 5);
+  G.heatTimer = 0;
+  if (stars > 0 && why) G.feed.push('WANTED: ' + why + '  +' + stars + ' star' + (stars > 1 ? 's' : ''));
+}
+export function driveCar(G, car, input, dt) {
+  const spec = VEHICLES[car.kind];
+  const ax = input.axis();
+  const wet = G.weather.rain > 0.4 ? 0.82 : 1;
+  const grip = spec.grip * wet;
+  if (ax.y < 0) car.speed += spec.accel * dt; // W = forward (axis y is -1 up)
+  else if (ax.y > 0) car.speed -= spec.accel * 1.4 * dt;
+  else car.speed -= Math.sign(car.speed) * 90 * dt;
+  if (input.down('Space')) { car.speed -= Math.sign(car.speed) * 420 * dt; car.handbrake = true; } else car.handbrake = false;
+  car.speed = clamp(car.speed, -spec.top * 0.45, spec.top);
+  if (Math.abs(car.speed) < 4 && ax.y === 0) car.speed = 0;
+  const steer = ax.x * (car.speed >= 0 ? 1 : -1);
+  const turnRate = grip * (car.handbrake ? 1.7 : 1) * clamp(Math.abs(car.speed) / 120, 0.25, 1);
+  car.angle += steer * turnRate * dt * (car.handbrake ? 1.15 : 1);
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  // World bounds: bounce softly off the edge.
-  if (nx < 30 || nx > WORLD - 30 || ny < 30 || ny > WORLD - 30) {
-    car.speed *= -0.3;
-    events.bumped = true;
+  const hit = collideBuildings(G.city, nx, ny, 26);
+  if (hit) {
+    if (Math.abs(car.speed) > 180) { damageCar(G, car, 12); G.audio.crash(); spawnCrash(G, car.x, car.y); }
+    car.speed *= -0.25; car.x += Math.cos(car.angle) * -8; car.y += Math.sin(car.angle) * -8;
   } else {
-    car.x = nx;
-    car.y = ny;
+    car.x = clamp(nx, 40, WORLD - 40); car.y = clamp(ny, 40, WORLD - 40);
   }
-  return events;
+  // Skid marks on hard turns / handbrake.
+  if ((car.handbrake && Math.abs(car.speed) > 120) || (Math.abs(steer) > 0 && Math.abs(car.speed) > 300)) {
+    G.skids.push({ x: car.x - Math.cos(car.angle) * 20, y: car.y - Math.sin(car.angle) * 20, a: car.angle, life: 6 });
+    if (G.skids.length > 400) G.skids.shift();
+  }
+  // Damage smoke.
+  if (car.hp < car.maxHp * 0.5 && Math.random() < dt * 12) {
+    G.particles.push({ x: car.x, y: car.y - 10, vx: (Math.random() - 0.5) * 20, vy: -30, life: 0.9, max: 0.9, size: 9, color: '#888', kind: 'smoke' });
+  }
+  car.brakeLight = ax.y > 0 || input.down('Space');
 }
-
-// Simple circle-ish collision between two cars (using their length as the
-// radius). Returns true when they overlap.
-export function carsOverlap(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  const r = (a.len + b.len) / 2 - 6;
-  return dx * dx + dy * dy < r * r;
+export function damageCar(G, car, dmg) {
+  car.hp -= dmg;
+  if (car.hp <= 0 && !car.dead) {
+    car.dead = true; car.speed = 0;
+    spawnCrash(G, car.x, car.y);
+    G.audio.crash();
+    if (car.driver === 'player') { G.feed.push('Your car is wrecked!'); }
+  }
 }
-
-// Push two overlapping cars apart and trade a little speed (a soft bump).
-export function resolveCarCollision(a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const overlap = (a.len + b.len) / 2 - 6 - dist;
-  if (overlap <= 0) return false;
-  const push = overlap / 2;
-  const ux = dx / dist;
-  const uy = dy / dist;
-  a.x -= ux * push;
-  a.y -= uy * push;
-  b.x += ux * push;
-  b.y += uy * push;
-  const tmp = a.speed;
-  a.speed = b.speed * 0.4;
-  b.speed = tmp * 0.4;
-  return true;
+export function spawnCrash(G, x, y) {
+  for (let i = 0; i < 14; i++) {
+    G.particles.push({ x, y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.5) * 260, life: 0.7, max: 0.7, size: 4 + Math.random() * 5, color: ['#ffcf4d', '#ff7a2e', '#666'][i % 3], kind: 'spark' });
+  }
+}
+export function updateSkids(G, dt) {
+  for (const s of G.skids) s.life -= dt;
+  G.skids = G.skids.filter((s) => s.life > 0);
 }

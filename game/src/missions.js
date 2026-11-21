@@ -1,244 +1,155 @@
-// Missions for Solmar Bay: six linked jobs for fixer Lena Cruz, each a
-// small state machine with steps, a map marker and a HUD objective line.
-// The module owns the current mission and reports completion back to the
-// main state, which pays out and saves.
-import { MISSIONS, SAFEHOUSE, PICKUP_POINT, STORE_POINT, AUTO_ROW_GT, DOCKS, RACE_CHECKPOINTS, RACE_TIME, STASH_SPOTS, STASH_REWARD } from './config.js';
-import { makeCar } from './vehicles.js';
-import { makeRival } from './combat.js';
-import { addWanted, setWanted } from './police.js';
+// Missions and story: eight linked jobs for fixer Salvo Kane, told through
+// Dana Reyes, a wheelwoman back in Port Azura. Each mission is a small state
+// machine — go somewhere, do something, get out — with pay, respect and a
+// next job unlocked. Fail a race or a robbery and you can retry it.
+import { MISSION_PAY, MISSION_NAMES, ECONOMY } from './config.js';
+import { dist, fmtMoney } from './random.js';
+import { makeCar, addWanted } from './vehicles.js';
+import { spawnRivals } from './combat.js';
+import { missionBriefing, missionOutro } from './story.js';
 
-export function startMission(state, index) {
-  const def = MISSIONS[index];
-  if (!def) return null;
-  const mission = {
-    def,
-    index,
-    step: 0,
-    timer: 0,
-    robProgress: 0,
-    raceCheckpoint: 0,
-    raceTimeLeft: RACE_TIME,
-    rivalsTotal: 0,
-    rivalsLeft: 0,
-    target: null,
-    done: false,
-  };
-  state.mission = mission;
-  state.missionMarkers = [];
-  switch (def.id) {
-    case 'M1':
-      mission.target = { x: PICKUP_POINT.x, y: PICKUP_POINT.y };
-      mission.stepText = 'Pick up the package at the blue marker';
-      break;
-    case 'M2':
-      mission.target = { x: SAFEHOUSE.x, y: SAFEHOUSE.y };
-      mission.stepText = 'Lose the cops, then reach the safehouse';
-      setWanted(state, 2);
-      break;
-    case 'M3':
-      mission.target = { x: STORE_POINT.x, y: STORE_POINT.y };
-      mission.stepText = 'Get to the corner store on Palm Row';
-      break;
-    case 'M4':
-      mission.target = { x: RACE_CHECKPOINTS[0].x, y: RACE_CHECKPOINTS[0].y };
-      mission.stepText = 'Reach checkpoint 1 of 4 — 90 seconds';
-      mission.raceTimeLeft = RACE_TIME;
-      mission.racePoints = RACE_CHECKPOINTS;
-      break;
-    case 'M5': {
-      mission.target = { x: AUTO_ROW_GT.x, y: AUTO_ROW_GT.y };
-      mission.stepText = 'Steal the gold Comet GT at Auto Row';
-      const gt = makeCar('comet', AUTO_ROW_GT.x, AUTO_ROW_GT.y, -Math.PI / 2, { parked: true, gold: true });
-      gt.isHeistCar = true;
-      state.cars.push(gt);
-      mission.heistCar = gt;
-      break;
-    }
-    case 'M6': {
-      mission.target = { x: DOCKS.x, y: DOCKS.y };
-      mission.stepText = 'Clear the docks — 8 Vultures, 2 lieutenants';
-      const spots = [
-        [420, 330, true], [620, 330, false], [480, 520, false], [700, 480, true],
-        [380, 620, false], [760, 620, false], [560, 420, false], [660, 700, false],
-      ];
-      mission.rivalsTotal = spots.length;
-      mission.rivalsLeft = spots.length;
-      for (const [x, y, lt] of spots) {
-        const r = makeRival(x, y, { hp: lt ? 5 : 3, lieutenant: lt, name: lt ? 'Vulture Lieutenant' : 'Vulture' });
-        state.rivals.push(r);
-      }
-      break;
-    }
-    default:
-      break;
+const RACE_POINTS = [
+  { x: 1360, y: 640 }, { x: 2800, y: 1000 }, { x: 2800, y: 2440 },
+  { x: 1000, y: 2800 }, { x: 640, y: 1360 },
+];
+const SHAKEDOWN_STOPS = [
+  { x: 1720, y: 560, label: 'Market Row stall' },
+  { x: 1180, y: 2360, label: 'Neon Diner' },
+  { x: 2360, y: 1060, label: 'Casino Sol' },
+];
+
+export function startMission(G, index) {
+  const m = G.mission;
+  m.index = index; m.failed = false; m.timer = 0; m.holdT = 0; m.cp = 0; m.stop = 0;
+  const P = G.city.places;
+  if (index === 0) { m.stage = 'go'; m.target = { x: 1500, y: 1180, label: 'Pick up the package — Downtown' }; }
+  if (index === 1) {
+    m.stage = 'steal';
+    const car = makeCar('sports', 2440, 1240, Math.PI / 2, { parked: true, color: '#c22e2e' });
+    G.cars.push(car); m.carId = car.id;
+    m.target = { x: 2440, y: 1240, label: 'Steal the Falco GT — Azura Motors' };
   }
-  state.flashMessage(`${def.id}/6 ${def.name.toUpperCase()} — $${def.reward} REWARD`, 4);
-  return mission;
-}
-
-export function completeMission(state) {
-  const m = state.mission;
-  if (!m || m.done) return;
-  m.done = true;
-  state.cash += m.def.reward;
-  state.save.missionsDone = Math.max(state.save.missionsDone, m.index + 1);
-  state.save.cash = state.cash;
-  if (state.persistSave) state.persistSave();
-  if (state.sound) state.sound.missionDone();
-  state.flashMessage(`MISSION COMPLETE — ${m.def.name.toUpperCase()}  +$${m.def.reward}`, 4);
-  state.spawnConfetti(state.player.x, state.player.y);
-  if (m.index === 3 && state.save.bestRace !== null) {
-    // best race time was recorded by the race step itself
+  if (index === 2) { m.stage = 'collect'; m.target = { ...SHAKEDOWN_STOPS[0] }; }
+  if (index === 3) {
+    m.stage = 'escape';
+    G.wanted = 3; G.heatTimer = 0;
+    m.target = { x: P.safehouse.x, y: P.safehouse.y, label: 'Lose the heat, then reach the Safehouse' };
+    G.feed.push('The drop went loud — 3 stars! Lose them and get home.');
   }
-  if (m.index >= MISSIONS.length - 1) {
-    state.save.storyDone = true;
-    if (state.persistSave) state.persistSave();
-    state.flashMessage('STORY COMPLETE — SOLMAR BAY IS YOURS', 6);
-    return;
+  if (index === 4) { m.stage = 'race'; m.timer = 100; m.cp = 0; m.target = { ...RACE_POINTS[0], label: 'Checkpoint 1/5 — 100s' }; }
+  if (index === 5) { m.stage = 'go'; m.target = { x: P.casino.x, y: P.casino.y, label: 'Walk into Casino Sol' }; }
+  if (index === 6) {
+    m.stage = 'steal';
+    const car = makeCar('aurora', 2360, 1240, -Math.PI / 2, { parked: true });
+    G.cars.push(car); m.carId = car.id;
+    m.target = { x: 2360, y: 1240, label: 'Steal the gold Aurora GT — Azura Motors' };
   }
-  startMission(state, m.index + 1);
-}
-
-// Distance from the player (or their car) to a point.
-function playerDist(state, x, y) {
-  const p = state.player;
-  const t = p.inCar || p;
-  return Math.hypot(t.x - x, t.y - y);
-}
-
-export function updateMission(state, dt) {
-  const m = state.mission;
-  if (!m || m.done) return;
-  const p = state.player;
-
-  switch (m.def.id) {
-    case 'M1': {
-      if (m.step === 0) {
-        if (playerDist(state, m.target.x, m.target.y) < 60) {
-          m.step = 1;
-          m.target = { x: SAFEHOUSE.x, y: SAFEHOUSE.y };
-          m.stepText = 'Deliver the package to the safehouse';
-          if (state.sound) state.sound.chime();
-          state.flashMessage('PACKAGE SECURED — TAKE IT TO THE SAFEHOUSE', 3);
-        }
-      } else if (playerDist(state, SAFEHOUSE.x, SAFEHOUSE.y) < 70) {
-        completeMission(state);
-      }
-      break;
-    }
-    case 'M2': {
-      if (state.wanted === 0 && playerDist(state, SAFEHOUSE.x, SAFEHOUSE.y) < 70) {
-        completeMission(state);
-      } else if (state.wanted === 0) {
-        m.stepText = 'Clean — now reach the safehouse';
-      } else {
-        m.stepText = `Lose the cops (${state.wanted}★), then reach the safehouse`;
-      }
-      break;
-    }
-    case 'M3': {
-      if (m.step === 0) {
-        if (playerDist(state, STORE_POINT.x, STORE_POINT.y) < 70) {
-          m.step = 1;
-          m.stepText = 'Hold E at the till — keep the till filling';
-          state.flashMessage('HOLD E TO EMPTY THE TILL', 2.5);
-        }
-      } else if (m.step === 1) {
-        if (playerDist(state, STORE_POINT.x, STORE_POINT.y) < 80 && state.input.down('KeyE')) {
-          m.robProgress += dt / 6; // six seconds at the till
-          if (m.robProgress >= 1) {
-            m.step = 2;
-            m.target = { x: SAFEHOUSE.x, y: SAFEHOUSE.y };
-            m.stepText = 'The till is empty — run to the safehouse';
-            addWanted(state, 2);
-            state.flashMessage('CLEAN GETAWAY — LOSE THE HEAT', 3);
-          }
-        } else {
-          m.robProgress = Math.max(0, m.robProgress - dt * 0.1);
-        }
-      } else if (playerDist(state, SAFEHOUSE.x, SAFEHOUSE.y) < 70) {
-        completeMission(state);
-      }
-      break;
-    }
-    case 'M4': {
-      m.raceTimeLeft -= dt;
-      if (m.raceTimeLeft <= 0) {
-        m.stepText = 'Out of time — the race restarts';
-        state.flashMessage('TIME UP — RACE RESTARTED', 3);
-        startMission(state, 3); // restart the race
-        return;
-      }
-      const cp = RACE_CHECKPOINTS[m.raceCheckpoint];
-      if (cp && playerDist(state, cp.x, cp.y) < 70) {
-        m.raceCheckpoint += 1;
-        if (state.sound) state.sound.checkpoint();
-        if (m.raceCheckpoint >= RACE_CHECKPOINTS.length) {
-          const used = RACE_TIME - m.raceTimeLeft;
-          if (state.save.bestRace === null || used < state.save.bestRace) {
-            state.save.bestRace = Math.round(used * 10) / 10;
-            if (state.persistSave) state.persistSave();
-          }
-          completeMission(state);
-        } else {
-          m.target = { x: RACE_CHECKPOINTS[m.raceCheckpoint].x, y: RACE_CHECKPOINTS[m.raceCheckpoint].y };
-          m.stepText = `Checkpoint ${m.raceCheckpoint + 1} of 4 — ${Math.ceil(m.raceTimeLeft)}s left`;
-        }
-      } else {
-        m.stepText = `Checkpoint ${m.raceCheckpoint + 1} of 4 — ${Math.ceil(m.raceTimeLeft)}s left`;
-      }
-      break;
-    }
-    case 'M5': {
-      if (m.step === 0) {
-        if (p.inCar && p.inCar.isHeistCar) {
-          m.step = 1;
-          m.target = { x: SAFEHOUSE.x, y: SAFEHOUSE.y };
-          m.stepText = 'The Comet is yours — deliver it to the safehouse';
-          addWanted(state, 2);
-          state.flashMessage('ALARM TRIPPED — 2 STARS — RUN IT TO THE SAFEHOUSE', 3.5);
-        }
-      } else if (p.inCar && p.inCar.isHeistCar && playerDist(state, SAFEHOUSE.x, SAFEHOUSE.y) < 80) {
-        completeMission(state);
-      } else if (!p.inCar || !p.inCar.isHeistCar) {
-        m.stepText = 'Get back in the gold Comet GT';
-        m.target = { x: m.heistCar.x, y: m.heistCar.y };
-      }
-      break;
-    }
-    case 'M6': {
-      const alive = state.rivals.filter((r) => !r.dead).length;
-      m.rivalsLeft = alive;
-      m.stepText = `Clear the docks — ${alive} Vultures left`;
-      if (alive === 0) completeMission(state);
-      break;
-    }
-    default:
-      break;
+  if (index === 7) {
+    m.stage = 'clear';
+    spawnRivals(G, P.docks.x, P.docks.y, 10, true);
+    m.target = { x: P.docks.x, y: P.docks.y, label: 'Clear the Docks — Tide Kings left: 10' };
+    G.feed.push('The Takeover: ten Tide Kings hold the Docks. Their boss wears gold.');
   }
+  G.audio.mission();
+  G.feed.push('MISSION ' + (index + 1) + '/8 — ' + MISSION_NAMES[index]);
+  missionBriefing(G, index);
 }
-
-// --- Stashes ----------------------------------------------------------------
-export function tryCollectStash(state) {
-  const p = state.player;
-  const t = p.inCar || p;
-  for (let i = 0; i < STASH_SPOTS.length; i += 1) {
-    if (state.save.stashes.includes(i)) continue;
-    const s = STASH_SPOTS[i];
-    if (Math.hypot(t.x - s.x, t.y - s.y) < 55) {
-      state.save.stashes.push(i);
-      state.cash += STASH_REWARD;
-      state.save.cash = state.cash;
-      if (state.persistSave) state.persistSave();
-      if (state.sound) state.sound.chime();
-      state.flashMessage(`STASH FOUND — +$${STASH_REWARD}  (${state.save.stashes.length}/10)`, 3);
-      state.spawnConfetti(s.x, s.y);
-      return true;
+export function missionObjective(G) {
+  const m = G.mission;
+  if (m.index >= 8) return 'Story complete — free roam. Fares, races and stashes still pay.';
+  if (m.failed) return 'Mission failed — press ENTER to retry ' + MISSION_NAMES[m.index];
+  return 'M' + (m.index + 1) + '/8 ' + MISSION_NAMES[m.index] + ' — ' + (m.target ? m.target.label : '');
+}
+function payOut(G) {
+  const m = G.mission;
+  const pay = MISSION_PAY[m.index];
+  G.player.cash += pay;
+  G.player.respect += 120;
+  G.audio.cash();
+  G.feed.push('MISSION COMPLETE  +' + fmtMoney(pay) + '  +120 respect');
+  missionOutro(G, m.index);
+  G.saveDirty = true;
+  if (m.index + 1 < 8) startMission(G, m.index + 1);
+  else { m.index = 8; m.stage = 'done'; m.target = null; G.feed.push('STORY COMPLETE — Port Azura is yours, Dana.'); }
+}
+function failMission(G, why) {
+  G.mission.failed = true;
+  G.audio.fail();
+  G.feed.push('MISSION FAILED — ' + why + ' (ENTER to retry)');
+}
+export function updateMission(G, dt) {
+  const m = G.mission, p = G.player, P = G.city.places;
+  if (m.index >= 8 || m.failed) return;
+  const near = (t, r) => t && dist(p.x, p.y, t.x, t.y) < (r || 70);
+  if (m.index === 0) {
+    if (m.stage === 'go' && near(m.target)) { m.stage = 'deliver'; m.target = { x: P.safehouse.x, y: P.safehouse.y, label: 'Deliver the package to the Safehouse' }; G.audio.pickup(); }
+    else if (m.stage === 'deliver' && near(m.target)) payOut(G);
+  }
+  if (m.index === 1 || m.index === 6) {
+    if (m.stage === 'steal' && p.car && p.car.id === m.carId) {
+      m.stage = 'deliver'; addWanted(G, 2, 'car theft');
+      m.target = { x: P.safehouse.x, y: P.safehouse.y, label: 'Deliver it to the Safehouse — don\'t wreck it' };
+      G.audio.horn();
+    } else if (m.stage === 'deliver' && p.car && p.car.id === m.carId && near(m.target, 90)) payOut(G);
+  }
+  if (m.index === 2) {
+    if (near(m.target, 80)) {
+      m.stop++;
+      G.player.cash += 150; G.audio.cash();
+      G.feed.push('Debt collected  +$150  (' + m.stop + '/3)');
+      if (m.stop >= 3) { payOut(G); return; }
+      m.target = { ...SHAKEDOWN_STOPS[m.stop] };
     }
   }
-  return false;
+  if (m.index === 3) {
+    if (G.wanted === 0 && near(m.target, 90)) payOut(G);
+    else if (G.wanted === 0) m.target.label = 'Heat is off — reach the Safehouse';
+  }
+  if (m.index === 4) {
+    m.timer -= dt;
+    if (m.timer <= 0) { failMission(G, 'out of time on the Azura 500'); return; }
+    if (near(m.target, 95)) {
+      m.cp++;
+      G.audio.pickup();
+      if (m.cp >= 5) { G.player.bestRace = Math.min(G.player.bestRace || 999, 100 - m.timer); payOut(G); return; }
+      m.target = { ...RACE_POINTS[m.cp], label: 'Checkpoint ' + (m.cp + 1) + '/5 — ' + Math.ceil(m.timer) + 's left' };
+    } else if (m.target) m.target.label = 'Checkpoint ' + (m.cp + 1) + '/5 — ' + Math.ceil(m.timer) + 's left';
+  }
+  if (m.index === 5) {
+    if (m.stage === 'go' && near(m.target, 80) && p.onFoot) {
+      m.stage = 'grab'; m.holdT = 0;
+      m.target = { x: P.casino.x, y: P.casino.y, label: 'Hold E — empty the till…' };
+    } else if (m.stage === 'grab') {
+      if (!near(m.target, 110) || !p.onFoot) { m.stage = 'go'; m.target = { x: P.casino.x, y: P.casino.y, label: 'Walk into Casino Sol' }; return; }
+      if (G.input.down('KeyE')) {
+        m.holdT += dt;
+        m.target.label = 'Emptying the till… ' + Math.ceil(3 - m.holdT) + 's';
+        if (m.holdT >= 3) {
+          m.stage = 'run'; addWanted(G, 3, 'casino robbery');
+          m.target = { x: P.safehouse.x, y: P.safehouse.y, label: 'Run! Get the cash to the Safehouse' };
+          G.audio.cash();
+        }
+      }
+    } else if (m.stage === 'run' && near(m.target, 90)) payOut(G);
+  }
+  if (m.index === 7) {
+    const left = G.rivals.filter((r) => !r.dead && dist(r.x, r.y, P.docks.x, P.docks.y) < 480).length;
+    if (m.target) m.target.label = 'Clear the Docks — Tide Kings left: ' + left;
+    if (left === 0) payOut(G);
+  }
 }
-
-export function stashCount(state) {
-  return state.save.stashes.length;
+export const MISSION_TIPS = [
+  'Tip: the package is on foot — park close, grab it, walk it home.',
+  'Tip: the Falco is fast but fragile. Brake early, cut corners late.',
+  'Tip: debts pay $150 on the spot. The till is the real money.',
+  'Tip: hide in alleys and behind buildings — cops lose you without line of sight.',
+  'Tip: checkpoints are forgiving; the clock is not. Keep the throttle down.',
+  'Tip: hold E at the till for 3 seconds. Bring a fast car for the run out.',
+  'Tip: the Aurora alarm brings 2 stars the moment you touch the door.',
+  'Tip: the boss takes 8 hits and his lieutenants 5. Use cover, use the shotgun.',
+];
+export function missionTip(index) { return MISSION_TIPS[index] || ''; }
+export function retryMission(G) {
+  if (G.mission.failed) startMission(G, G.mission.index);
 }
+export { RACE_POINTS };
