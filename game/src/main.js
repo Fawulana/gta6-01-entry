@@ -58,7 +58,6 @@ function startAutotest() {
     simTime: 0,
     done: false,
   };
-  // Mission 1: steal a car, drive to the hideout.
   game.missions.startNext();
   game.sound.muted = true;
 }
@@ -67,7 +66,8 @@ function startAutotest() {
 // foot) toward the current mission marker, following the road grid so it
 // never tries to drive through a building. It drives through the same input
 // the player uses, so a passing autotest means the mission is really
-// playable.
+// playable. Waypoints snap to road centre lines; the target marker itself
+// is only approached once the car is on the right road.
 function snapRoad(v) {
   return Math.round(v / 400) * 400;
 }
@@ -102,7 +102,9 @@ function autopilot(game, dt, input) {
   const px = player.px;
   const py = player.py;
   if (!player.car) {
-    // Walk to the nearest stealable car first.
+    // Walk to the nearest stealable car first. On foot the controls are
+    // directional (WASD moves in screen directions), so steer by pressing
+    // the keys for the waypoint's direction, not by turning like a car.
     let car = null;
     let best = 1e9;
     for (const c of game.parkedCars) {
@@ -117,14 +119,19 @@ function autopilot(game, dt, input) {
       input.inject('KeyE', true);
       return;
     }
-    const wp = roadWaypoint(px, py, car ? car.x : target.x, car ? car.y : target.y);
-    const want = Math.atan2(wp.y - py, wp.x - px);
-    let diff = want - player.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    input.inject('KeyW', true);
-    if (diff > 0.3) input.inject('KeyD', true);
-    else if (diff < -0.3) input.inject('KeyA', true);
+    // Close to the car: walk straight at it — the road-grid waypoints
+    // only help over long distances and can ping-pong near a corner.
+    // Far away: follow the road grid so the player never cuts through
+    // a building.
+    const wp = best < 260 && car
+      ? { x: car.x, y: car.y }
+      : roadWaypoint(px, py, car ? car.x : target.x, car ? car.y : target.y);
+    const dx = wp.x - px;
+    const dy = wp.y - py;
+    if (dy < -12) input.inject('KeyW', true);
+    else if (dy > 12) input.inject('KeyS', true);
+    if (dx < -12) input.inject('KeyA', true);
+    else if (dx > 12) input.inject('KeyD', true);
     return;
   }
   const car = player.car;
@@ -136,7 +143,12 @@ function autopilot(game, dt, input) {
   let diff = want - car.angle;
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
-  const reversing = Math.abs(diff) > Math.PI * 0.7;
+  // Reverse only for a genuine U-turn, with hysteresis: once reversing,
+  // keep going until the car is mostly lined up, or it flip-flops
+  // between forward and reverse while wedged against another car.
+  if (Math.abs(diff) > 2.8) auto.reversing = true;
+  else if (Math.abs(diff) < 1.9) auto.reversing = false;
+  const reversing = !!auto.reversing;
   if (targetDist > 90) {
     input.inject('KeyW', !reversing);
     input.inject('KeyS', reversing);

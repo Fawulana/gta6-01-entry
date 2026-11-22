@@ -1,5 +1,5 @@
 // Palmetto Bay — shared constants, car classes, districts and tuning.
-// Every number here is the game's own design; the world is built from them.
+// The whole city, its cars and its economy are described by these numbers.
 export const WORLD = {
   size: 4800,
   block: 400,
@@ -7,17 +7,17 @@ export const WORLD = {
   blocks: 12,
 };
 
-export const VIEW = { width: 1280, height: 800 };
+export const VIEW = { width: 1280, height: 720 };
 
-// The six car classes. speed is px/s, accel px/s^2, grip 0..1 (higher = less drift).
+// Seven car classes. top is px/s, accel px/s^2, grip 0..1 (higher = tighter).
 export const CAR_CLASSES = {
-  sedan:   { name: 'Coastal Sedan',  top: 330, accel: 260, grip: 0.82, length: 46, width: 22, colors: ['#c0392b', '#2e86c1', '#7d3c98', '#b7950b'] },
-  coupe:   { name: 'Veloce Coupe',   top: 380, accel: 300, grip: 0.78, length: 44, width: 21, colors: ['#e74c3c', '#f39c12', '#1abc9c'] },
-  truck:   { name: 'Hauler Truck',   top: 280, accel: 200, grip: 0.9,  length: 58, width: 26, colors: ['#5d6d7e', '#935116', '#1e8449'] },
-  van:     { name: 'Mover Van',      top: 300, accel: 210, grip: 0.88, length: 54, width: 25, colors: ['#aeb6bf', '#2c3e50', '#7b241c'] },
-  sports:  { name: 'Falcon GT',      top: 460, accel: 380, grip: 0.72, length: 46, width: 22, colors: ['#f1c40f', '#e67e22', '#8e44ad'] },
-  marlin:  { name: 'Golden Marlin',  top: 500, accel: 420, grip: 0.7,  length: 48, width: 22, colors: ['#ffd700'] },
-  police:  { name: 'PBPD Interceptor', top: 430, accel: 360, grip: 0.75, length: 47, width: 22, colors: ['#1a1a2e'] },
+  sedan:   { name: 'Coastal Sedan',   top: 335, accel: 265, grip: 0.83, length: 46, width: 22, colors: ['#c0392b', '#2e86c1', '#7d3c98', '#b7950b'] },
+  coupe:   { name: 'Veloce Coupe',    top: 385, accel: 305, grip: 0.78, length: 44, width: 21, colors: ['#e74c3c', '#f39c12', '#1abc9c'] },
+  truck:   { name: 'Hauler Truck',    top: 285, accel: 205, grip: 0.90, length: 58, width: 26, colors: ['#5d6d7e', '#935116', '#1e8449'] },
+  van:     { name: 'Mover Van',       top: 305, accel: 215, grip: 0.88, length: 54, width: 25, colors: ['#aeb6bf', '#2c3e50', '#7b241c'] },
+  sports:  { name: 'Falcon GT',       top: 465, accel: 385, grip: 0.72, length: 46, width: 22, colors: ['#f1c40f', '#e67e22', '#8e44ad'] },
+  marlin:  { name: 'Golden Marlin',   top: 505, accel: 425, grip: 0.70, length: 48, width: 22, colors: ['#ffd700'] },
+  police:  { name: 'PBPD Interceptor', top: 435, accel: 365, grip: 0.75, length: 47, width: 22, colors: ['#141428'] },
 };
 
 export const DISTRICTS = [
@@ -31,11 +31,11 @@ export const DISTRICTS = [
 ];
 
 export const PLAYER_TUNE = {
-  walkSpeed: 175,
-  runSpeed: 260,
+  walkSpeed: 180,
+  runSpeed: 265,
   health: 100,
   armor: 0,
-  punchDamage: 12,
+  punchDamage: 14,
   bulletDamage: 34,
   startCash: 120,
 };
@@ -55,6 +55,9 @@ export const PRICES = {
   ammoPack: 24,
 };
 
-export const SAVE_SLOT = 'palmetto-bay-save-v8';
+// Taxi side job: a fare pays between these two amounts, scaled by distance.
+export const FARE = { minPay: 120, maxPay: 240, pickupSeconds: 90 };
+
+export const SAVE_SLOT = 'palmetto-bay-save-v9';
 export const GAME_TITLE = 'Palmetto Bay';
 export const GAME_SUBTITLE = 'An open-world crime story in the sun-soaked city of Palmetto Bay';

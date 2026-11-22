@@ -1,76 +1,68 @@
-// Shops: Ray's Pay 'n Spray (repair + clear wanted) and the Gun Rack
-// (ammo, armor, health). Each shop is a zone; standing or parking inside it
-// with the right key opens its menu.
+// Palmetto Bay — shops: Ray's Pay 'n Spray and The Gun Rack.
+// Walk into the marked zone and press Q. Spray repairs the car and
+// clears the wanted level; the Gun Rack sells ammo, armor and health.
+// Buying is the only way to clear a 5-star wanted level besides
+// outrunning the PBPD until the heat cools off.
 import { PRICES } from './config.js';
-
-export const SHOP_MENU = {
-  spray: [
-    { id: 'repair', label: 'Full repair + respray', price: PRICES.spray, desc: 'Fixes your car and clears your wanted level' },
-  ],
-  guns: [
-    { id: 'ammo', label: 'Ammo pack (+24 rounds)', price: PRICES.ammo, desc: 'A box of pistol rounds' },
-    { id: 'armor', label: 'Body armor (+50)', price: PRICES.armor, desc: 'Stops the first few hits' },
-    { id: 'health', label: 'First aid (+40 health)', price: PRICES.health, desc: 'Bandages and a cold drink' },
-  ],
-};
 
 export class Shops {
   constructor(city) {
-    this.city = city;
-    this.near = null; // shop the player is inside right now
-    this.open = null; // shop whose menu is open
+    this.defs = city.shops;
+    this.near = null;
+    this.open = null;
     this.selected = 0;
-    this.flash = '';
-    this.flashTimer = 0;
-  }
-
-  // Which shop zone contains (x, y), if any.
-  shopAt(x, y) {
-    for (const shop of this.city.shops) {
-      if (x > shop.x && x < shop.x + shop.w && y > shop.y && y < shop.y + shop.h) return shop;
-    }
-    return null;
   }
 
   step(dt, player) {
-    if (this.flashTimer > 0) this.flashTimer -= dt;
-    this.near = this.shopAt(player.px, player.py);
-    if (!this.near) this.open = null;
+    if (this.open) return;
+    this.near = null;
+    for (const shop of this.defs) {
+      if (Math.hypot(player.px - shop.x, player.py - shop.y) < 90) {
+        this.near = shop;
+        break;
+      }
+    }
+  }
+
+  items() {
+    if (!this.open) return [];
+    if (this.open.kind === 'spray') {
+      return [{ label: `Full repair + clear wanted — $${PRICES.spray}`, price: PRICES.spray, kind: 'spray' }];
+    }
+    return [
+      { label: `Ammo +${PRICES.ammoPack} — $${PRICES.ammo}`, price: PRICES.ammo, kind: 'ammo' },
+      { label: `Body armor — $${PRICES.armor}`, price: PRICES.armor, kind: 'armor' },
+      { label: `Health pack — $${PRICES.health}`, price: PRICES.health, kind: 'health' },
+    ];
   }
 
   buy(game) {
-    const shop = this.open;
-    if (!shop) return;
-    const item = SHOP_MENU[shop.kind][this.selected];
+    const items = this.items();
+    const item = items[this.selected];
     if (!item) return;
     const player = game.player;
     if (player.cash < item.price) {
-      this.flash = 'Not enough cash';
-      this.flashTimer = 2;
-      return;
-    }
-    if (item.id === 'repair' && !player.car) {
-      this.flash = 'You need a car for a respray';
-      this.flashTimer = 2;
+      game.missions.message = 'Not enough cash';
+      game.missions.messageTimer = 2;
       return;
     }
     player.cash -= item.price;
-    if (item.id === 'repair') {
-      player.car.health = 100;
+    if (item.kind === 'spray') {
+      if (player.car) player.car.health = 100;
       game.wanted.clear();
       game.police.cars = [];
-      this.flash = 'Resprayed — the heat is off';
-    } else if (item.id === 'ammo') {
+      game.missions.message = 'Sprayed and clean — wanted cleared';
+    } else if (item.kind === 'ammo') {
       player.ammo += PRICES.ammoPack;
-      this.flash = 'Ammo restocked';
-    } else if (item.id === 'armor') {
-      player.armor = Math.min(100, player.armor + 50);
-      this.flash = 'Armor fitted';
-    } else if (item.id === 'health') {
-      player.heal(40);
-      this.flash = 'Patched up';
+      game.missions.message = `Ammo +${PRICES.ammoPack}`;
+    } else if (item.kind === 'armor') {
+      player.armor = 100;
+      game.missions.message = 'Armor fitted';
+    } else if (item.kind === 'health') {
+      player.heal(100);
+      game.missions.message = 'Patched up';
     }
-    this.flashTimer = 2.5;
-    game.sound.cash();
+    game.missions.messageTimer = 2.5;
+    game.sound.pickup();
   }
 }

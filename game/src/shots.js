@@ -4,6 +4,7 @@
 // the same URL always renders the same frame.
 import { createGame } from './game.js';
 import { SCREEN_TITLE, SCREEN_PLAY } from './render.js';
+import { Car } from './vehicles.js';
 
 function placeInCar(game, cls, x, y, angle, speed) {
   const car = game.parkedCars.find((c) => c.cls === cls) || game.parkedCars[0];
@@ -16,11 +17,9 @@ function placeInCar(game, cls, x, y, angle, speed) {
   return car;
 }
 
-import { Car } from './vehicles.js';
-
 function spawnCops(game, spots) {
   for (const [x, y] of spots) {
-    const car = new Car('police', x, y, Math.atan2(game.player.py - y, game.player.px - x), { color: '#1a1a2e' });
+    const car = new Car('police', x, y, Math.atan2(game.player.py - y, game.player.px - x), { color: '#141428' });
     car.speed = 220;
     game.police.cars.push(car);
   }
@@ -85,6 +84,7 @@ export function stageShot(name, renderer) {
     return { game, screen: SCREEN_PLAY };
   }
 
-  // 'start' and anything else: the title screen.
+  // 'start' and anything else: the title screen. The start shot shows
+  // the sunset skyline, the title and the controls — no gameplay needed.
   return { game, screen: SCREEN_TITLE };
 }

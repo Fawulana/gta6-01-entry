@@ -1,60 +1,69 @@
-// Keyboard and mouse input, with a small queue of pressed keys so the game
-// can react to single taps (enter car, shoot, pause) as well as held keys.
+// Palmetto Bay — keyboard and mouse input with per-frame "hit" edges.
+// A hit fires once on the frame the key goes down; held keys stay down.
+// `inject` lets the autotest drive the same input path as a player, so a
+// passing autotest proves the real controls work, not a shortcut.
 export class Input {
   constructor(canvas) {
-    this.keys = new Set();
+    this.down = new Set();
     this.pressed = new Set();
     this.mouseX = 0;
     this.mouseY = 0;
-    this.mouseDown = false;
     this.mouseClicked = false;
+    this.mouseDown = false;
     this.canvas = canvas;
-    this.onKey = null;
-    window.addEventListener('keydown', (event) => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) event.preventDefault();
-      if (!event.repeat) this.pressed.add(event.code);
-      this.keys.add(event.code);
-      if (this.onKey) this.onKey(event.code);
-    });
-    window.addEventListener('keyup', (event) => {
-      this.keys.delete(event.code);
-    });
-    canvas.addEventListener('mousemove', (event) => {
+    this._listeners = [];
+
+    const onKeyDown = (event) => {
+      if (event.repeat) return;
+      this.down.add(event.code);
+      this.pressed.add(event.code);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+        event.preventDefault();
+      }
+    };
+    const onKeyUp = (event) => {
+      this.down.delete(event.code);
+    };
+    const onMouseMove = (event) => {
       const rect = canvas.getBoundingClientRect();
       this.mouseX = event.clientX - rect.left;
       this.mouseY = event.clientY - rect.top;
-    });
-    canvas.addEventListener('mousedown', (event) => {
-      if (event.button === 0) {
-        this.mouseDown = true;
-        this.mouseClicked = true;
-      }
-    });
-    window.addEventListener('mouseup', (event) => {
-      if (event.button === 0) this.mouseDown = false;
-    });
-    window.addEventListener('blur', () => {
-      this.keys.clear();
+    };
+    const onMouseDown = (event) => {
+      onMouseMove(event);
+      this.mouseDown = true;
+      this.mouseClicked = true;
+    };
+    const onMouseUp = () => {
       this.mouseDown = false;
-    });
+    };
+    const onBlur = () => {
+      this.down.clear();
+      this.mouseDown = false;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onBlur);
+    this._listeners.push(['keydown', onKeyDown], ['keyup', onKeyUp]);
   }
 
-  down(...codes) {
-    return codes.some((code) => this.keys.has(code));
+  held(...codes) {
+    return codes.some((c) => this.down.has(c));
   }
 
-  // True once per physical key press; consumed at the end of each frame.
   hit(...codes) {
-    return codes.some((code) => this.pressed.has(code));
+    return codes.some((c) => this.pressed.has(c));
   }
 
-  // Synthetic input used by the ?autotest= harness and the screenshot pilot.
-  inject(code, isDown) {
-    if (isDown) {
-      this.keys.add(code);
+  inject(code, on) {
+    if (on) {
+      this.down.add(code);
       this.pressed.add(code);
     } else {
-      this.keys.delete(code);
+      this.down.delete(code);
     }
   }
 

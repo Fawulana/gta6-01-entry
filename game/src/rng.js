@@ -1,10 +1,10 @@
-// Deterministic random numbers: mulberry32 plus the small helpers the world
-// generator, traffic and pedestrians share. One seed drives the whole city,
-// so the same seed always builds the same Palmetto Bay.
+// Palmetto Bay — deterministic seeded RNG (mulberry32) plus helpers.
+// One seed builds the same city, the same traffic and the same crowd
+// every run, so the game, the screenshots and the autotest are stable.
+// The seed is the entry date: 2026-11-22.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
-    a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -16,11 +16,11 @@ export function makeRng(seed) {
   const next = mulberry32(seed);
   return {
     next,
-    int(min, max) {
-      return min + Math.floor(next() * (max - min + 1));
-    },
     range(min, max) {
       return min + next() * (max - min);
+    },
+    int(min, max) {
+      return Math.floor(min + next() * (max - min + 1));
     },
     pick(list) {
       return list[Math.floor(next() * list.length)];
@@ -31,12 +31,4 @@ export function makeRng(seed) {
   };
 }
 
-// A tiny deterministic hash of a string, used to seed per-block detail.
-export function hashString(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+export const SEED = 20261122;

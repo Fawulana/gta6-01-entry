@@ -1,5 +1,5 @@
-// The Game: all live state and one step() that moves the world. Screens,
-// menus and the render loop live in main.js; this module is pure game logic.
+// Palmetto Bay — the game object: all live state and one step().
+// Screens and the frame loop live in main.js; this is pure game logic.
 import { SEED, City } from './world.js';
 import { Player } from './player.js';
 import { Traffic, Car, collideCars } from './vehicles.js';
@@ -34,6 +34,12 @@ export function createGame() {
     hasSaveFlag: false,
     savedFlash: '',
     savedFlashTimer: 0,
+    faresDone: 0,
+    fare: null,
+    fareTimer: 0,
+    winShown: false,
+    winShownHandled: false,
+    dayPhase: 0.32,
   };
   game.combat.traffic = game.traffic;
   for (const spot of city.parkedCars()) {
@@ -65,6 +71,7 @@ export function applySave(game, data) {
       if (game.city.chests[i]) game.city.chests[i].looted = !!looted;
     });
   }
+  game.faresDone = data.fares || 0;
   game.playSeconds = data.playSeconds || 0;
   game.police.cars = [];
 }
@@ -79,28 +86,15 @@ export function newGameFromSave() {
 function nearestStealableCar(game, x, y, maxDist) {
   let best = null;
   let bestDist = maxDist;
-  for (const car of game.parkedCars) {
-    if (car.dead) continue;
-    const d = Math.hypot(car.x - x, car.y - y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = car;
-    }
-  }
-  for (const car of game.traffic.cars) {
-    if (car.dead) continue;
-    const d = Math.hypot(car.x - x, car.y - y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = car;
-    }
-  }
-  for (const car of game.police.cars) {
-    if (car.dead) continue;
-    const d = Math.hypot(car.x - x, car.y - y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = car;
+  const pools = [game.parkedCars, game.traffic.cars, game.police.cars];
+  for (const pool of pools) {
+    for (const car of pool) {
+      if (car.dead) continue;
+      const d = Math.hypot(car.x - x, car.y - y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = car;
+      }
     }
   }
   return best;
@@ -111,18 +105,61 @@ function onCrime(game, level, reason) {
   if (level >= 1 && Math.random() < 0.5) game.sound.sirenBlip();
 }
 
+// Taxi side job: a fare marker appears while you drive; reach it, then
+// drive the passenger to the drop-off before the timer runs out. Fares
+// never appear during a story mission, so they can never block one.
+function maybeOfferFare(game) {
+  if (game.fare || !game.player.car || game.missions.active) return;
+  if (Math.random() > 0.004) return;
+  const spots = [game.city.spawns.casino, game.city.spawns.marina, game.city.spawns.park, game.city.spawns.dock];
+  const pick = spots[Math.floor(Math.random() * spots.length)];
+  const drop = spots[(spots.indexOf(pick) + 2) % spots.length];
+  game.fare = { pickup: pick, dropoff: drop, stage: 'pickup', timer: 90, pay: 120 + Math.floor(Math.random() * 120) };
+  game.missions.message = 'Taxi fare available — reach the yellow marker';
+  game.missions.messageTimer = 3;
+}
+
+function stepFare(game, dt) {
+  if (!game.fare) return;
+  const fare = game.fare;
+  fare.timer -= dt;
+  const target = fare.stage === 'pickup' ? fare.pickup : fare.dropoff;
+  if (Math.hypot(game.player.px - target.x, game.player.py - target.y) < 80) {
+    if (fare.stage === 'pickup') {
+      fare.stage = 'dropoff';
+      fare.timer = 90;
+      game.missions.message = 'Passenger aboard — drive to the drop-off';
+      game.missions.messageTimer = 3;
+    } else {
+      game.player.cash += fare.pay;
+      game.faresDone += 1;
+      game.missions.message = `Fare complete — +$${fare.pay}`;
+      game.missions.messageTimer = 3;
+      game.sound.cash();
+      game.fare = null;
+    }
+    return;
+  }
+  if (fare.timer <= 0 || !game.player.car) {
+    game.fare = null;
+    game.missions.message = 'Fare lost';
+    game.missions.messageTimer = 2;
+  }
+}
+
 // One fixed step of the world. Input is read here for play actions; the
 // screen state machine in main.js decides when this runs.
 export function stepGame(game, dt, input, canvas) {
   const player = game.player;
   game.time += dt;
   game.playSeconds += dt;
+  game.dayPhase = (game.dayPhase + dt / 240) % 1;
   if (game.savedFlashTimer > 0) game.savedFlashTimer -= dt;
 
   // Mouse aim.
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const scaleX = canvas.width / Math.max(1, rect.width);
+  const scaleY = canvas.height / Math.max(1, rect.height);
   const mx = input.mouseX * scaleX;
   const my = input.mouseY * scaleY;
   const cam = game.rendererCamera;
@@ -148,7 +185,6 @@ export function stepGame(game, dt, input, canvas) {
         if (wasTraffic) {
           onCrime(game, 1, 'carjacked a driver');
         } else if (wasParked) {
-          // A parked theft is only noticed when someone sees it.
           const witness = game.crowd.nearest(player.x, player.y, 320);
           if (witness) onCrime(game, 1, 'seen stealing a parked car');
         }
@@ -189,6 +225,13 @@ export function stepGame(game, dt, input, canvas) {
     }
   }
 
+  // Radio station.
+  if (input.hit('KeyR')) {
+    const station = game.sound.nextStation();
+    game.missions.message = `Radio: ${station}`;
+    game.missions.messageTimer = 2;
+  }
+
   // Save.
   if (input.hit('KeyH')) {
     if (saveGame(game)) {
@@ -199,10 +242,6 @@ export function stepGame(game, dt, input, canvas) {
   }
 
   // Shop menu.
-  if (game.shops.near && input.hit('KeyE') && !player.car) {
-    // E already handled entering a car; shops open with E only when no car
-    // is in reach, which the enter-car branch above leaves alone.
-  }
   if (game.shops.near && input.hit('KeyQ')) {
     game.shops.open = game.shops.near;
     game.shops.selected = 0;
@@ -261,6 +300,10 @@ export function stepGame(game, dt, input, canvas) {
       if (car.dead || car === player.car) continue;
       if (collideCars(player.car, car)) game.sound.crash();
     }
+    for (const car of game.traffic.cars) {
+      if (car.dead || car === player.car) continue;
+      if (collideCars(player.car, car)) game.sound.crash();
+    }
   }
 
   // Stash chests.
@@ -275,18 +318,20 @@ export function stepGame(game, dt, input, canvas) {
     }
   }
 
+  // Taxi fares.
+  maybeOfferFare(game);
+  stepFare(game, dt);
+
   // Missions.
   const wasActive = game.missions.active;
   const wasStage = wasActive ? wasActive.stage : -1;
   game.missions.step(dt, game);
   if (wasActive && game.missions.active === null && game.missions.completed > 0) {
-    // A mission just completed: pay out.
     const def = wasActive.def;
     player.cash += def.reward;
     game.sound.missionDone();
   }
   if (wasActive && game.missions.active && game.missions.active.stage !== wasStage) {
-    // Bank alarm: grabbing the cash brings the heat.
     if (wasActive.def.id === 5 && wasStage === 1) {
       onCrime(game, 2, 'bank alarm tripped');
     }
@@ -304,7 +349,7 @@ export function stepGame(game, dt, input, canvas) {
   game.sound.engine(speedRatio);
   game.sound.musicTick(dt, !!player.car && speedRatio > 0.1);
 
-  // Car smoke.
+  // Car smoke when badly damaged.
   if (player.car && player.car.health < 40 && Math.random() < dt * 6) {
     game.combat.smoke(player.car.x, player.car.y);
   }

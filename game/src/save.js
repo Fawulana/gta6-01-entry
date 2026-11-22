@@ -1,27 +1,38 @@
-// Save and load: one slot in localStorage, named from the first write.
-// SAVE_SLOT is 'palmetto-bay-save-v8' — the slot name is part of the entry.
+// Palmetto Bay — save / load through localStorage.
+// Only plain numbers, booleans and strings are stored; nothing else.
+// The version field lets a future build refuse a stale save instead of
+// loading numbers it does not understand.
 import { SAVE_SLOT } from './config.js';
 
-export { SAVE_SLOT };
+export function hasSave() {
+  try {
+    return !!localStorage.getItem(SAVE_SLOT);
+  } catch {
+    return false;
+  }
+}
 
 export function saveGame(game) {
+  const data = {
+    version: 9,
+    player: {
+      x: Math.round(game.player.x),
+      y: Math.round(game.player.y),
+      health: game.player.health,
+      armor: game.player.armor,
+      cash: game.player.cash,
+      ammo: game.player.ammo,
+    },
+    wanted: { stars: game.wanted.stars },
+    missions: {
+      completed: game.missions.completed,
+      index: game.missions.index,
+    },
+    chests: game.city.chests.map((c) => !!c.looted),
+    fares: game.faresDone || 0,
+    playSeconds: Math.round(game.playSeconds),
+  };
   try {
-    const data = {
-      version: 8,
-      savedAt: Date.now(),
-      player: {
-        x: game.player.x,
-        y: game.player.y,
-        health: game.player.health,
-        armor: game.player.armor,
-        cash: game.player.cash,
-        ammo: game.player.ammo,
-      },
-      wanted: { stars: game.wanted.stars },
-      missions: game.missions.toSave(),
-      chests: game.city.chests.map((c) => c.looted),
-      playSeconds: game.playSeconds,
-    };
     localStorage.setItem(SAVE_SLOT, JSON.stringify(data));
     return true;
   } catch {
@@ -34,18 +45,10 @@ export function loadGame() {
     const raw = localStorage.getItem(SAVE_SLOT);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 8) return null;
+    if (!data || typeof data !== 'object' || data.version !== 9) return null;
     return data;
   } catch {
     return null;
-  }
-}
-
-export function hasSave() {
-  try {
-    return !!localStorage.getItem(SAVE_SLOT);
-  } catch {
-    return false;
   }
 }
 
@@ -53,6 +56,6 @@ export function clearSave() {
   try {
     localStorage.removeItem(SAVE_SLOT);
   } catch {
-    // Storage unavailable; nothing to clear.
+    // Storage unavailable: nothing to clear.
   }
 }

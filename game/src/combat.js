@@ -1,158 +1,114 @@
-// Combat: bullets, punches, muzzle flashes and the little explosion of
-// sparks when a shot lands. Nothing here knows about missions or the HUD.
-import { PLAYER_TUNE } from './config.js';
-
-export class Bullet {
-  constructor(x, y, angle, fromPlayer) {
-    this.x = x;
-    this.y = y;
-    this.angle = angle;
-    this.fromPlayer = fromPlayer;
-    this.speed = 900;
-    this.life = 0.9;
-    this.dead = false;
-  }
-
-  step(dt, city) {
-    this.x += Math.cos(this.angle) * this.speed * dt;
-    this.y += Math.sin(this.angle) * this.speed * dt;
-    this.life -= dt;
-    if (this.life <= 0 || !city.inBounds(this.x, this.y)) this.dead = true;
-    if (city.collideCircle(this.x, this.y, 2)) this.dead = true;
-  }
-}
-
-export class Particle {
-  constructor(x, y, vx, vy, life, color, size) {
-    this.x = x;
-    this.y = y;
-    this.vx = vx;
-    this.vy = vy;
-    this.life = life;
-    this.maxLife = life;
-    this.color = color;
-    this.size = size || 3;
-  }
-
-  step(dt) {
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.vx *= Math.max(0, 1 - 2 * dt);
-    this.vy *= Math.max(0, 1 - 2 * dt);
-    this.life -= dt;
-  }
-}
-
+// Palmetto Bay — combat: bullets, blood, smoke, sparks and muzzle flash.
+// Bullets are short-lived; the renderer draws them from this list.
 export class Combat {
   constructor() {
     this.bullets = [];
     this.particles = [];
-    this.muzzle = 0;
+    this.traffic = null;
   }
 
-  shoot(x, y, angle, fromPlayer) {
-    this.bullets.push(new Bullet(x + Math.cos(angle) * 18, y + Math.sin(angle) * 18, angle, fromPlayer));
-    this.muzzle = 0.06;
-    for (let i = 0; i < 4; i += 1) {
-      const a = angle + (Math.random() - 0.5) * 0.9;
-      const s = 120 + Math.random() * 160;
-      this.particles.push(new Particle(x + Math.cos(angle) * 20, y + Math.sin(angle) * 20, Math.cos(a) * s, Math.sin(a) * s, 0.25, '#ffd34d', 2));
-    }
+  shoot(x, y, angle, byPlayer) {
+    this.bullets.push({
+      x: x + Math.cos(angle) * 22,
+      y: y + Math.sin(angle) * 22,
+      vx: Math.cos(angle) * 640,
+      vy: Math.sin(angle) * 640,
+      life: 0.9,
+      byPlayer,
+    });
+    this.spark(x + Math.cos(angle) * 26, y + Math.sin(angle) * 26, '#ffd34d', 5);
   }
 
   punchHit(x, y, angle) {
-    for (let i = 0; i < 6; i += 1) {
-      const a = angle + (Math.random() - 0.5) * 1.4;
-      const s = 60 + Math.random() * 120;
-      this.particles.push(new Particle(x, y, Math.cos(a) * s, Math.sin(a) * s, 0.3, '#ffffff', 3));
-    }
+    this.spark(x, y, '#ffffff', 4);
   }
 
   blood(x, y) {
-    for (let i = 0; i < 8; i += 1) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 40 + Math.random() * 140;
-      this.particles.push(new Particle(x, y, Math.cos(a) * s, Math.sin(a) * s, 0.5, '#c0392b', 3));
-    }
-  }
-
-  sparks(x, y) {
-    for (let i = 0; i < 10; i += 1) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 80 + Math.random() * 220;
-      this.particles.push(new Particle(x, y, Math.cos(a) * s, Math.sin(a) * s, 0.4, '#f39c12', 2));
-    }
+    this.spark(x, y, '#c0392b', 10);
   }
 
   smoke(x, y) {
-    this.particles.push(new Particle(x, y, (Math.random() - 0.5) * 20, -30 - Math.random() * 20, 1.1, 'rgba(120,120,120,0.5)', 6));
+    this.particles.push({ x, y, vx: 0, vy: -24, life: 0.9, max: 0.9, size: 9, color: '#555', kind: 'smoke' });
   }
 
+  spark(x, y, color, count) {
+    for (let i = 0; i < count; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 60 + Math.random() * 140;
+      this.particles.push({
+        x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life: 0.35, max: 0.35, size: 3, color, kind: 'spark',
+      });
+    }
+  }
+
+  explosion(x, y) {
+    this.spark(x, y, '#ff9f1a', 22);
+    this.spark(x, y, '#ff3b30', 14);
+    this.particles.push({ x, y, vx: 0, vy: -30, life: 1.2, max: 1.2, size: 16, color: '#333', kind: 'smoke' });
+  }
+
+  // Bullets fly, hit buildings, cars, peds and the player. A bullet that
+  // hits anything stops there; one that misses simply expires in the air.
   step(dt, city, player, crowd, police, wanted, onCrime) {
-    if (this.muzzle > 0) this.muzzle -= dt;
     for (const b of this.bullets) {
-      b.step(dt, city);
-      if (b.dead) continue;
-      if (b.fromPlayer) {
-        // Hit a pedestrian?
-        const ped = crowd.nearest(b.x, b.y, 16);
+      b.life -= dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      if (city.collideCircle(b.x, b.y, 2)) {
+        b.life = 0;
+        this.spark(b.x, b.y, '#cccccc', 3);
+        continue;
+      }
+      if (b.byPlayer) {
+        // Hit a pedestrian.
+        const ped = crowd.nearest(b.x, b.y, 14);
         if (ped) {
           ped.dead = true;
-          this.blood(b.x, b.y);
-          b.dead = true;
+          this.blood(ped.x, ped.y);
           onCrime(1, 'shot a pedestrian');
+          b.life = 0;
           continue;
         }
-        // Hit a police car?
-        const cop = police.nearest(b.x, b.y, 24);
-        if (cop) {
-          cop.health -= PLAYER_TUNE.bulletDamage;
-          this.sparks(b.x, b.y);
-          b.dead = true;
-          if (cop.health <= 0) {
-            cop.dead = true;
-            onCrime(2, 'destroyed a PBPD cruiser');
-          } else {
-            onCrime(1, 'shot at police');
+        // Hit a police car.
+        for (const car of police.cars) {
+          if (car.dead) continue;
+          if (Math.hypot(car.x - b.x, car.y - b.y) < 26) {
+            car.damage(34);
+            this.spark(b.x, b.y, '#ffd34d', 4);
+            if (car.dead) this.explosion(car.x, car.y);
+            b.life = 0;
+            break;
           }
-          continue;
         }
-        // Hit a traffic car?
-        const car = this.nearestCar(b.x, b.y, 24, player);
-        if (car) {
-          car.health -= PLAYER_TUNE.bulletDamage;
-          this.sparks(b.x, b.y);
-          b.dead = true;
-          if (car.health <= 0) car.dead = true;
+        if (b.life <= 0) continue;
+        // Hit a traffic car.
+        if (this.traffic) {
+          for (const car of this.traffic.cars) {
+            if (car.dead) continue;
+            if (Math.hypot(car.x - b.x, car.y - b.y) < 26) {
+              car.damage(34);
+              this.spark(b.x, b.y, '#ffd34d', 4);
+              b.life = 0;
+              break;
+            }
+          }
         }
-      } else if (Math.hypot(b.x - player.px, b.y - player.py) < 16) {
-        player.damage(PLAYER_TUNE.bulletDamage * 0.6, 'shot');
-        this.blood(b.x, b.y);
-        b.dead = true;
+      } else if (!player.car && !player.dead) {
+        if (Math.hypot(player.x - b.x, player.y - b.y) < 14) {
+          player.damage(10, 'shot');
+          b.life = 0;
+        }
       }
     }
-    this.bullets = this.bullets.filter((b) => !b.dead);
-    for (const p of this.particles) p.step(dt);
+    this.bullets = this.bullets.filter((b) => b.life > 0);
+    for (const p of this.particles) {
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+    }
     this.particles = this.particles.filter((p) => p.life > 0);
-  }
-
-  nearestCar(x, y, maxDist, player) {
-    // Traffic cars are found through the game object, set by the caller.
-    if (!this.traffic) return null;
-    let best = null;
-    let bestDist = maxDist;
-    for (const car of this.traffic.cars) {
-      if (car.dead) continue;
-      const d = Math.hypot(car.x - x, car.y - y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = car;
-      }
-    }
-    if (player.car) {
-      const d = Math.hypot(player.car.x - x, player.car.y - y);
-      if (d < bestDist) best = player.car;
-    }
-    return best;
   }
 }

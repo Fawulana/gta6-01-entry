@@ -1,33 +1,28 @@
-// The city of Palmetto Bay: a seeded grid of roads and blocks, buildings with
-// windows, parks, water at the marina, shops, stash chests and mission spots.
-// Everything is derived from one seed, so the map never changes between runs.
-import { WORLD, DISTRICTS, CAR_CLASSES } from './config.js';
-import { makeRng, hashString } from './rng.js';
+// Palmetto Bay — the seeded city.
+// A 4800x4800 grid of 400px blocks separated by 64px roads. Buildings,
+// parks, water, chests, shop fronts, mission spawns and parked cars are
+// all placed by the seed, so the same seed always builds the same city.
+import { makeRng, SEED } from './rng.js';
+import { WORLD, DISTRICTS } from './config.js';
 
-export const SEED = 20261122;
+export { SEED };
+
+function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
+  }
+  return DISTRICTS[0];
+}
 
 export function isRoad(x, y) {
-  const m = WORLD.block;
-  const off = WORLD.road / 2;
-  const rx = ((x % m) + m) % m;
-  const ry = ((y % m) + m) % m;
-  return rx < off || rx > m - off || ry < off || ry > m - off;
+  if (x < 0 || y < 0 || x >= WORLD.size || y >= WORLD.size) return false;
+  const bx = ((x % WORLD.block) + WORLD.block) % WORLD.block;
+  const by = ((y % WORLD.block) + WORLD.block) % WORLD.block;
+  return bx < WORLD.road || by < WORLD.road;
 }
 
-export function roadCentre(x) {
-  const m = WORLD.block;
-  return Math.floor(x / m) * m;
-}
-
-export function nearestRoadPoint(x, y) {
-  // Snap a point to the centre line of the nearest road.
-  const m = WORLD.block;
-  const rx = ((x % m) + m) % m;
-  const ry = ((y % m) + m) % m;
-  const dx = Math.min(rx, m - rx);
-  const dy = Math.min(ry, m - ry);
-  if (dx <= dy) return { x: rx < m / 2 ? roadCentre(x) : roadCentre(x) + m, y };
-  return { x, y: ry < m / 2 ? roadCentre(y) : roadCentre(y) + m };
+export function roadCenter(v) {
+  return Math.round(v / WORLD.block) * WORLD.block + WORLD.road / 2;
 }
 
 export class City {
@@ -40,150 +35,134 @@ export class City {
     this.chests = [];
     this.shops = [];
     this.spawns = {};
+    this.parkedSpots = [];
     this.build();
   }
 
   build() {
     const rng = this.rng;
-    const m = WORLD.block;
-    const half = WORLD.road / 2 + 14;
-    // Buildings fill every block interior, one to four per block.
+    const { size, block, road } = WORLD;
+    // Marina water: a bay along the south-west shore.
+    this.water.push({ x: 0, y: 2400, w: 700, h: 2400 });
+    this.water.push({ x: 0, y: 4400, w: 1600, h: 400 });
+    // Harbor water: a basin on the east edge.
+    this.water.push({ x: 4200, y: 1600, w: 600, h: 900 });
+
     for (let bx = 0; bx < WORLD.blocks; bx += 1) {
       for (let by = 0; by < WORLD.blocks; by += 1) {
-        const x0 = bx * m + half;
-        const y0 = by * m + half;
-        const w = m - half * 2;
-        const h = m - half * 2;
-        const district = this.districtAt(x0 + w / 2, y0 + h / 2);
-        // Marina blocks on the west edge are water, not buildings.
-        if (district.name === 'Marina' && bx <= 1 && rng.chance(0.55)) {
-          this.water.push({ x: x0, y: y0, w, h });
+        const x0 = bx * block + road;
+        const y0 = by * block + road;
+        const cx = x0 + (block - road) / 2;
+        const cy = y0 + (block - road) / 2;
+        const district = districtAt(cx, cy);
+        // Skip blocks that fall in the water.
+        if (this.inWater(cx, cy, 10)) continue;
+        const roll = rng.next();
+        if (district.name === 'North Park' && roll < 0.55) {
+          this.parks.push({ x: x0, y: y0, w: block - road, h: block - road, trees: rng.int(6, 14) });
           continue;
         }
-        if (district.name === 'North Park' && rng.chance(0.5)) {
-          this.parks.push({ x: x0, y: y0, w, h, trees: rng.int(4, 9) });
+        if (roll < 0.12) {
+          this.parks.push({ x: x0, y: y0, w: block - road, h: block - road, trees: rng.int(3, 8) });
           continue;
         }
-        const count = district.tall ? rng.int(2, 4) : rng.int(1, 3);
-        const cols = count > 2 ? 2 : 1;
-        const rows = Math.ceil(count / cols);
-        const cw = w / cols;
-        const ch = h / rows;
-        for (let i = 0; i < count; i += 1) {
-          const cx = x0 + (i % cols) * cw;
-          const cy = y0 + Math.floor(i / cols) * ch;
-          const bw = cw - rng.range(18, 46);
-          const bh = ch - rng.range(18, 46);
-          const tall = district.tall && rng.chance(0.6);
+        // One or two buildings per block, with a courtyard gap.
+        const tall = district.tall && rng.chance(0.6);
+        const bw = rng.range(90, 150);
+        const bh = rng.range(90, 150);
+        this.buildings.push({
+          x: x0 + rng.range(8, 60), y: y0 + rng.range(8, 60),
+          w: bw, h: bh, tall, tint: district.tint,
+          floors: tall ? rng.int(6, 14) : rng.int(1, 3),
+          district: district.name,
+        });
+        if (rng.chance(0.45)) {
           this.buildings.push({
-            x: cx + (cw - bw) / 2,
-            y: cy + (ch - bh) / 2,
-            w: bw,
-            h: bh,
-            tall,
-            color: this.buildingColor(district, rng),
-            roof: rng.pick(['#5a4a3a', '#3a3a3a', '#6b5a4a', '#2f3a2f']),
-            seed: hashString(`${bx},${by},${i}`),
+            x: x0 + 180 + rng.range(0, 40), y: y0 + 170 + rng.range(0, 40),
+            w: rng.range(70, 110), h: rng.range(70, 110), tall: false,
+            tint: district.tint, floors: rng.int(1, 2), district: district.name,
           });
         }
       }
     }
-    // Shops: two Pay 'n Spray garages and two Gun Rack stores, on road corners.
-    this.shops = [
-      { kind: 'spray', name: "Ray's Pay 'n Spray", x: 800, y: 400, w: 150, h: 110 },
-      { kind: 'spray', name: "Ray's Pay 'n Spray", x: 3600, y: 2800, w: 150, h: 110 },
-      { kind: 'guns', name: 'Gun Rack', x: 2000, y: 1200, w: 140, h: 100 },
-      { kind: 'guns', name: 'Gun Rack', x: 3200, y: 4000, w: 140, h: 100 },
-    ];
-    // Eight stash chests tucked onto sidewalks, just off the road edge.
-    const chestSpots = [
-      [444, 940], [1556, 444], [2444, 1556], [3156, 844],
-      [844, 2756], [1956, 3556], [3556, 2356], [4356, 3956],
-    ];
-    chestSpots.forEach(([x, y], i) => {
-      this.chests.push({ id: i, x, y, looted: false, cash: 150 + i * 35 });
-    });
-    // Key mission spots. Every one sits on a road centre line, so a car can
-    // always reach it: a marker inside a block would be walled off by
-    // buildings.
+
+    // Mission and story spawns, all on roads or open ground.
     this.spawns = {
-      player: { x: 400, y: 620 },
-      hideout: { x: 400, y: 620 },
-      marlin: { x: 400, y: 2100 },
-      bank: { x: 1200, y: 1200 },
-      docks: { x: 400, y: 3200 },
-      warehouse: { x: 4000, y: 3600 },
-      stadium: { x: 2800, y: 800 },
-      airport: { x: 4400, y: 1600 },
+      player: { x: 832, y: 832 },
+      hideout: { x: 832, y: 2400 },
+      marla: { x: 1200, y: 832 },
+      marina: { x: 400, y: 2000 },
+      warehouse: { x: 3600, y: 3600 },
+      bank: { x: 2000, y: 1200 },
+      airport: { x: 4000, y: 4000 },
+      dock: { x: 3800, y: 2000 },
+      casino: { x: 2800, y: 400 },
+      park: { x: 800, y: 3600 },
     };
-  }
 
-  districtAt(x, y) {
-    for (const d of DISTRICTS) {
-      if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
-    }
-    return DISTRICTS[0];
-  }
-
-  buildingColor(district, rng) {
-    const base = [
-      '#8a7a6a', '#7a6a5a', '#9a8a7a', '#6a7a8a', '#8a6a6a',
-      '#a08a6a', '#5a6a7a', '#7a5a6a',
+    // Shops: Pay 'n Spray garages and the Gun Rack.
+    this.shops = [
+      { kind: 'spray', x: 1600, y: 832, name: "Ray's Pay 'n Spray" },
+      { kind: 'spray', x: 3600, y: 2400, name: "Ray's Pay 'n Spray" },
+      { kind: 'gun', x: 2400, y: 1600, name: 'The Gun Rack' },
+      { kind: 'gun', x: 1200, y: 4000, name: 'The Gun Rack' },
     ];
-    const pick = rng.pick(base);
-    return district.tall ? rng.pick(['#4a5a7a', '#5a6a8a', '#6a5a6a', '#3a4a5a']) : pick;
+
+    // Eight hidden stash chests, spread across districts so exploring pays.
+    const chestSpots = [
+      [432, 432], [2832, 432], [432, 2832], [4432, 432],
+      [1232, 3632], [3632, 1232], [4432, 4432], [2032, 3232],
+    ];
+    for (const [x, y] of chestSpots) {
+      this.chests.push({ x, y, cash: rng.int(150, 400), looted: false });
+    }
+
+    // Parked cars along road edges.
+    const classes = ['sedan', 'coupe', 'truck', 'van', 'sports', 'sedan', 'coupe', 'van'];
+    for (let i = 0; i < 26; i += 1) {
+      const gx = rng.int(1, 11);
+      const gy = rng.int(1, 11);
+      const alongX = rng.chance(0.5);
+      const x = alongX ? gx * block + road / 2 + rng.range(-8, 8) : gx * block + rng.range(90, 300);
+      const y = alongX ? gy * block + rng.range(90, 300) : gy * block + road / 2 + rng.range(-8, 8);
+      if (this.inWater(x, y, 20)) continue;
+      this.parkedSpots.push({
+        cls: classes[i % classes.length],
+        x, y, angle: alongX ? 0 : Math.PI / 2,
+      });
+    }
+    // The Golden Marlin waits in the Marina, parked by the water.
+    this.parkedSpots.push({ cls: 'marlin', x: 400, y: 2080, angle: Math.PI / 2 });
   }
 
-  // Circle vs buildings: returns the building hit, or null. Shops are open
-  // lots, not walls, so they never block movement.
-  collideCircle(x, y, r) {
+  inWater(x, y, pad) {
+    for (const w of this.water) {
+      if (x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad) return true;
+    }
+    return false;
+  }
+
+  parkedCars() {
+    return this.parkedSpots;
+  }
+
+  // True when the point is inside a solid building (roads and parks are open).
+  solidAt(x, y) {
     for (const b of this.buildings) {
-      if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return b;
+      if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return b;
     }
     return null;
   }
 
-  // Resolve a circle out of a building by pushing it along the smallest axis.
-  pushOut(x, y, r) {
-    const b = this.collideCircle(x, y, r);
-    if (!b) return { x, y, hit: false };
-    const left = x + r - b.x;
-    const right = b.x + b.w - (x - r);
-    const top = y + r - b.y;
-    const bottom = b.y + b.h - (y - r);
-    const min = Math.min(left, right, top, bottom);
-    if (min === left) return { x: b.x - r, y, hit: true };
-    if (min === right) return { x: b.x + b.w + r, y, hit: true };
-    if (min === top) return { x, y: b.y - r, hit: true };
-    return { x, y: b.y + b.h + r, hit: true };
+  // Push a moving circle out of buildings and water; returns true on hit.
+  collideCircle(x, y, radius) {
+    const b = this.solidAt(x, y);
+    if (b) return b;
+    if (this.inWater(x, y, 0)) return { water: true };
+    return null;
   }
 
-  inBounds(x, y) {
-    return x > 20 && y > 20 && x < WORLD.size - 20 && y < WORLD.size - 20;
-  }
-
-  // Parked cars for stealing: fixed spots plus a few seeded ones, all parked
-  // on road centre lines so the player can always walk up to them.
-  parkedCars() {
-    const spots = [
-      { cls: 'sedan', x: 680, y: 400, angle: 0 },
-      { cls: 'coupe', x: 1200, y: 680, angle: Math.PI / 2 },
-      { cls: 'van', x: 2040, y: 1600, angle: 0 },
-      { cls: 'truck', x: 3200, y: 2040, angle: Math.PI / 2 },
-      { cls: 'sports', x: 2800, y: 1240, angle: Math.PI / 2 },
-      { cls: 'sedan', x: 4000, y: 840, angle: Math.PI / 2 },
-      { cls: 'coupe', x: 840, y: 4000, angle: 0 },
-      { cls: 'marlin', x: this.spawns.marlin.x, y: this.spawns.marlin.y, angle: Math.PI / 2 },
-    ];
-    const rng = makeRng(this.seed + 77);
-    const classes = Object.keys(CAR_CLASSES).filter((c) => c !== 'police' && c !== 'marlin');
-    for (let i = 0; i < 10; i += 1) {
-      if (rng.chance(0.5)) {
-        spots.push({ cls: rng.pick(classes), x: rng.range(200, 4600), y: rng.int(0, 11) * WORLD.block, angle: 0 });
-      } else {
-        spots.push({ cls: rng.pick(classes), x: rng.int(0, 11) * WORLD.block, y: rng.range(200, 4600), angle: Math.PI / 2 });
-      }
-    }
-    return spots;
+  districtName(x, y) {
+    return districtAt(x, y).name;
   }
 }

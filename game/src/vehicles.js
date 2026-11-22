@@ -1,160 +1,123 @@
-// Cars: arcade physics (accelerate, steer, drift, collide), traffic that
-// follows the road grid, and the parked cars the player can steal.
-import { WORLD, CAR_CLASSES } from './config.js';
+// Palmetto Bay — cars and traffic.
+// A car is a simple arcade body: accelerate, steer by speed, drift a
+// little at low grip, brake, and take damage. Traffic cars follow the
+// road grid, stop for nothing, and honk when the player blocks them.
 import { makeRng } from './rng.js';
-import { isRoad, roadCentre } from './world.js';
-
-let nextId = 1;
+import { CAR_CLASSES, WORLD } from './config.js';
+import { isRoad, roadCenter } from './world.js';
 
 export class Car {
   constructor(cls, x, y, angle, opts = {}) {
-    this.id = nextId;
-    nextId += 1;
     this.cls = cls;
     this.spec = CAR_CLASSES[cls];
     this.x = x;
     this.y = y;
     this.angle = angle;
     this.speed = 0;
-    this.color = opts.color || this.spec.colors[0];
-    this.traffic = !!opts.traffic;
-    this.police = cls === 'police';
-    this.parked = !!opts.parked;
-    this.stolen = false;
-    this.dead = false;
-    this.smoke = 0;
     this.health = 100;
+    this.color = opts.color || this.spec.colors[0];
+    this.parked = !!opts.parked;
+    this.traffic = !!opts.traffic;
+    this.police = !!opts.police;
+    this.dead = false;
     this.hitCooldown = 0;
-    this.targetAngle = angle;
-    this.laneOffset = opts.laneOffset || 0;
-    this.wait = 0;
+    this.honkTimer = 0;
+    this.smokeTimer = 0;
   }
 
-  get length() { return this.spec.length; }
-  get width() { return this.spec.width; }
-
-  // Drive with throttle (-1..1) and steering (-1..1) for dt seconds.
-  drive(throttle, steer, dt) {
-    const s = this.spec;
-    this.hitCooldown = Math.max(0, this.hitCooldown - dt);
-    const maxSpeed = s.top * (throttle < 0 ? 0.45 : 1);
-    this.speed += throttle * s.accel * dt;
-    if (throttle === 0) this.speed *= Math.max(0, 1 - 0.8 * dt);
-    if (this.speed > maxSpeed) this.speed = maxSpeed;
-    if (this.speed < -s.top * 0.45) this.speed = -s.top * 0.45;
-    const turnRate = 2.6 * s.grip * Math.min(1, Math.abs(this.speed) / 140);
-    this.angle += steer * turnRate * Math.sign(this.speed) * dt;
-    const nx = this.x + Math.cos(this.angle) * this.speed * dt;
-    const ny = this.y + Math.sin(this.angle) * this.speed * dt;
-    this.x = nx;
-    this.y = ny;
-    if (Math.abs(this.speed) > s.top * 0.75) this.smoke = Math.min(1, this.smoke + dt);
-    else this.smoke = Math.max(0, this.smoke - dt * 2);
+  drive(fwd, steer, dt, brake) {
+    if (this.dead) return;
+    const spec = this.spec;
+    if (fwd > 0) this.speed += spec.accel * dt;
+    else if (fwd < 0) this.speed -= spec.accel * 0.7 * dt;
+    else this.speed -= Math.sign(this.speed) * 60 * dt;
+    if (brake) this.speed -= Math.sign(this.speed) * 420 * dt;
+    if (Math.abs(this.speed) < 8 && fwd === 0) this.speed = 0;
+    this.speed = Math.max(-spec.top * 0.45, Math.min(spec.top, this.speed));
+    const dir = this.speed >= 0 ? 1 : -1;
+    const steerRate = 2.6 * spec.grip * Math.min(1, Math.abs(this.speed) / 120 + 0.25);
+    this.angle += steer * steerRate * dir * dt;
+    const drift = 1 - spec.grip;
+    const vx = Math.cos(this.angle) * this.speed;
+    const vy = Math.sin(this.angle) * this.speed;
+    // A touch of drift: low-grip cars slide sideways when turning hard.
+    const slide = steer !== 0 && Math.abs(this.speed) > 200 ? drift * 26 * dt : 0;
+    this.x += vx * dt - Math.sin(this.angle) * slide * Math.sign(steer);
+    this.y += vy * dt + Math.cos(this.angle) * slide * Math.sign(steer);
+    this.x = Math.max(20, Math.min(WORLD.size - 20, this.x));
+    this.y = Math.max(20, Math.min(WORLD.size - 20, this.y));
   }
 
-  // Simple traffic brain: follow the road grid, turn at intersections.
-  trafficStep(dt, city, rng) {
-    if (this.wait > 0) {
-      this.wait -= dt;
-      this.speed *= Math.max(0, 1 - 4 * dt);
-      return;
+  damage(amount) {
+    if (this.dead) return;
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.health = 0;
+      this.dead = true;
+      this.speed = 0;
     }
-    const ahead = 46;
-    const ax = this.x + Math.cos(this.angle) * ahead;
-    const ay = this.y + Math.sin(this.angle) * ahead;
-    const onRoad = isRoad(this.x, this.y);
-    let steer = 0;
-    let throttle = 0.55;
-    if (!onRoad) {
-      // Steer back toward the nearest road centre line.
-      const m = WORLD.block;
-      const rx = ((this.x % m) + m) % m;
-      const ry = ((this.y % m) + m) % m;
-      const toRoadX = rx < m / 2 ? -rx : m - rx;
-      const toRoadY = ry < m / 2 ? -ry : m - ry;
-      const want = Math.abs(toRoadX) < Math.abs(toRoadY)
-        ? Math.atan2(0, Math.sign(toRoadX))
-        : Math.atan2(Math.sign(toRoadY), 0);
-      steer = this.steerToward(want);
-      throttle = 0.4;
-    } else if (!isRoad(ax, ay)) {
-      // About to leave the road: pick a turn at the intersection.
-      const options = [0, Math.PI / 2, -Math.PI / 2];
-      const turn = rng.pick(options);
-      this.targetAngle = this.angle + turn;
-      this.wait = 0.12;
-    }
-    steer = this.steerToward(this.targetAngle);
-    // Slow for the car ahead.
-    const slow = this.speed > 200;
-    this.drive(throttle, steer, dt);
-    if (slow) this.speed = Math.min(this.speed, 210);
-    // Keep inside the city.
-    if (this.x < 60 || this.x > WORLD.size - 60 || this.y < 60 || this.y > WORLD.size - 60) {
-      this.targetAngle = this.angle + Math.PI;
-    }
-  }
-
-  steerToward(want) {
-    let diff = want - this.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    return Math.max(-1, Math.min(1, diff * 2.2));
-  }
-
-  // Chase a point (police behaviour): full throttle, steer hard.
-  chaseStep(dt, tx, ty) {
-    const want = Math.atan2(ty - this.y, tx - this.x);
-    const steer = this.steerToward(want);
-    const dist = Math.hypot(tx - this.x, ty - this.y);
-    const throttle = dist > 90 ? 1 : 0.4;
-    this.drive(throttle, steer, dt);
   }
 }
 
 export function collideCars(a, b) {
+  if (a.dead || b.dead) return false;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const min = (a.length + b.length) / 2 - 6;
-  if (dist >= min) return false;
-  const push = (min - dist) / 2;
+  const dist = Math.hypot(dx, dy);
+  const minDist = (a.spec.length + b.spec.length) / 2 - 6;
+  if (dist >= minDist || dist === 0) return false;
+  const push = (minDist - dist) / 2;
   const nx = dx / dist;
   const ny = dy / dist;
   a.x -= nx * push;
   a.y -= ny * push;
   b.x += nx * push;
   b.y += ny * push;
-  const exchange = (a.speed + b.speed) / 2;
-  a.speed = exchange * 0.4;
-  b.speed = exchange * 0.4;
-  // Damage only once per half second of contact: without the cooldown two
-  // cars resting against each other would grind each other to scrap.
-  if (a.hitCooldown <= 0 && b.hitCooldown <= 0) {
-    a.health -= 4;
-    b.health -= 4;
-    a.hitCooldown = 0.5;
-    b.hitCooldown = 0.5;
+  // Lateral shove: two cars meeting head-on on a narrow road would grind
+  // to a halt if they only ever pushed each other fore and aft. A sideways
+  // nudge lets them slide past each other instead of deadlocking.
+  const overlap = minDist - dist;
+  const lat = overlap * 0.4;
+  const px = -ny;
+  const py = nx;
+  const side = Math.sign((b.x - a.x) * py - (b.y - a.y) * px) || 1;
+  a.x -= px * lat * side;
+  a.y -= py * lat * side;
+  b.x += px * lat * side;
+  b.y += py * lat * side;
+  const impact = Math.abs(a.speed - b.speed);
+  if (impact > 60) {
+    const aSpeed = a.speed;
+    const bSpeed = b.speed;
+    a.damage(impact * 0.03);
+    b.damage(impact * 0.03);
+    // Keep most of the momentum: a hard stop every frame while the cars
+    // overlap would pin both of them in place forever.
+    a.speed = aSpeed * 0.55 + bSpeed * 0.2;
+    b.speed = bSpeed * 0.55 + aSpeed * 0.2;
+    return true;
   }
-  return true;
+  return false;
 }
 
 export class Traffic {
   constructor(city, seed) {
-    this.rng = makeRng(seed + 31);
+    this.rng = makeRng(seed + 77);
     this.cars = [];
-    const classes = ['sedan', 'coupe', 'truck', 'van', 'sports'];
+    const classes = ['sedan', 'coupe', 'truck', 'van', 'sedan', 'coupe'];
     for (let i = 0; i < 16; i += 1) {
-      const bx = this.rng.int(0, 11) * WORLD.block;
-      const by = this.rng.int(0, 11) * WORLD.block;
+      const gx = this.rng.int(1, 11);
+      const gy = this.rng.int(1, 11);
       const horizontal = this.rng.chance(0.5);
-      const cls = this.rng.pick(classes);
-      const car = new Car(cls, bx + (horizontal ? this.rng.range(80, 320) : 0), by + (horizontal ? 0 : this.rng.range(80, 320)), horizontal ? 0 : Math.PI / 2, {
+      const x = horizontal ? gx * WORLD.block + this.rng.range(100, 300) : roadCenter(gx * WORLD.block);
+      const y = horizontal ? roadCenter(gy * WORLD.block) : gy * WORLD.block + this.rng.range(100, 300);
+      const angle = horizontal ? (this.rng.chance(0.5) ? 0 : Math.PI) : (this.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2);
+      const car = new Car(classes[i % classes.length], x, y, angle, {
         traffic: true,
-        color: this.rng.pick(CAR_CLASSES[cls].colors),
-        laneOffset: this.rng.range(-8, 8),
+        color: this.rng.pick(CAR_CLASSES[classes[i % classes.length]].colors),
       });
-      car.speed = this.rng.range(120, 200);
+      car.speed = this.rng.range(90, 170);
+      car.cruise = car.speed;
       this.cars.push(car);
     }
   }
@@ -162,34 +125,41 @@ export class Traffic {
   step(dt, city, playerCar) {
     for (const car of this.cars) {
       if (car.dead) continue;
-      // Don't let traffic pile onto the player's car: slow when close ahead.
-      car.trafficStep(dt, city, this.rng);
-      const hit = city.collideCircle(car.x, car.y, 14);
-      if (hit) {
-        car.angle += Math.PI / 2;
-        car.x -= Math.cos(car.angle) * 20;
-        car.y -= Math.sin(car.angle) * 20;
+      car.hitCooldown = Math.max(0, car.hitCooldown - dt);
+      // Ease back to cruising speed.
+      const target = car.cruise || 130;
+      car.speed += Math.sign(target - car.speed) * 40 * dt;
+      // Stay on the road: if the car drifted off the grid, steer back.
+      const aheadX = car.x + Math.cos(car.angle) * 60;
+      const aheadY = car.y + Math.sin(car.angle) * 60;
+      if (!isRoad(aheadX, aheadY)) {
+        // Nudge toward the nearest road centre line.
+        const cx = roadCenter(car.x);
+        const cy = roadCenter(car.y);
+        const want = Math.abs(car.x - cx) < Math.abs(car.y - cy)
+          ? Math.atan2(cy - car.y, 0)
+          : Math.atan2(0, cx - car.x);
+        let diff = want - car.angle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        car.angle += Math.max(-1.6 * dt, Math.min(1.6 * dt, diff));
+      }
+    // Don't rear-end the player: slow down when close ahead, and never
+    // push through the player's car.
+    if (playerCar && playerCar !== car) {
+        const d = Math.hypot(playerCar.x - car.x, playerCar.y - car.y);
+        if (d < 90) car.speed = Math.min(car.speed, 40);
+      }
+      car.x += Math.cos(car.angle) * car.speed * dt;
+      car.y += Math.sin(car.angle) * car.speed * dt;
+      // Wrap around the city edge so traffic never runs out.
+      if (car.x < 0) car.x += WORLD.size;
+      if (car.x >= WORLD.size) car.x -= WORLD.size;
+      if (car.y < 0) car.y += WORLD.size;
+      if (car.y >= WORLD.size) car.y -= WORLD.size;
+      for (const other of this.cars) {
+        if (other !== car) collideCars(car, other);
       }
     }
-    for (let i = 0; i < this.cars.length; i += 1) {
-      for (let j = i + 1; j < this.cars.length; j += 1) {
-        collideCars(this.cars[i], this.cars[j]);
-      }
-      if (playerCar) collideCars(this.cars[i], playerCar);
-    }
-  }
-
-  nearest(x, y, maxDist) {
-    let best = null;
-    let bestDist = maxDist;
-    for (const car of this.cars) {
-      if (car.dead) continue;
-      const d = Math.hypot(car.x - x, car.y - y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = car;
-      }
-    }
-    return best;
   }
 }

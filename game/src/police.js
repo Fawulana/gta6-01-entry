@@ -1,106 +1,110 @@
-// The wanted system: 0 to 5 stars. Crimes raise it, police cars spawn and
-// chase, and it cools down when the player stays out of trouble — or drops
-// instantly at a Pay 'n Spray.
-import { WANTED } from './config.js';
+// Palmetto Bay — the wanted system and the PBPD.
+// Crimes add stars; stars decide how many interceptors chase you. Cops
+// ram, and at high heat they shoot. Break line of sight and the heat
+// slowly cools off.
+import { makeRng } from './rng.js';
 import { Car } from './vehicles.js';
-import { WORLD } from './config.js';
+import { WANTED, WORLD } from './config.js';
 
 export class Wanted {
   constructor() {
     this.stars = 0;
-    this.heat = 0; // 0..1 within the current star level
-    this.quietTimer = 0;
-    this.sirenTimer = 0;
+    this.heat = 0;
+    this.coolTimer = 0;
+    this.lastCrime = '';
   }
 
   addCrime(level, reason) {
-    if (level <= 0) return;
     this.stars = Math.min(WANTED.maxStars, this.stars + level);
-    this.heat = 1;
-    this.quietTimer = 0;
-    this.lastReason = reason;
+    this.heat = Math.min(100, this.heat + level * 22);
+    this.coolTimer = WANTED.decaySeconds;
+    if (reason) this.lastCrime = reason;
   }
 
   clear() {
     this.stars = 0;
     this.heat = 0;
-    this.quietTimer = 0;
+    this.coolTimer = 0;
   }
 
   step(dt, policeVisible) {
     if (this.stars === 0) return;
     if (policeVisible) {
-      this.quietTimer = 0;
-      this.heat = Math.min(1, this.heat + dt * 0.05);
+      this.coolTimer = WANTED.decaySeconds;
       return;
     }
-    this.quietTimer += dt;
-    if (this.quietTimer > WANTED.decaySeconds) {
-      this.stars -= 1;
-      this.heat = 0.5;
-      this.quietTimer = 0;
+    this.coolTimer -= dt;
+    if (this.coolTimer <= 0) {
+      this.stars = Math.max(0, this.stars - 1);
+      this.coolTimer = WANTED.decaySeconds;
+      this.heat = Math.max(0, this.heat - 20);
     }
   }
 }
 
 export class Police {
   constructor(seed) {
+    this.rng = makeRng(seed + 55);
     this.cars = [];
     this.spawnTimer = 0;
-    this.seed = seed;
+    this.shootTimer = 0;
   }
 
-  wantedCount(stars) {
-    return WANTED.policePerStar[Math.min(stars, WANTED.maxStars)];
+  wantedCount() {
+    return WANTED.policePerStar;
   }
 
   step(dt, player, wanted, city) {
-    const want = this.wantedCount(wanted.stars);
     this.spawnTimer -= dt;
-    if (this.cars.length < want && this.spawnTimer <= 0) {
+    const target = WANTED.policePerStar[wanted.stars] || 0;
+    if (this.cars.length < target && this.spawnTimer <= 0) {
       this.spawnTimer = 1.2;
-      const angle = Math.random() * Math.PI * 2;
-      const r = WANTED.copSpawnRadius;
-      const x = player.x + Math.cos(angle) * r;
-      const y = player.y + Math.sin(angle) * r;
-      const car = new Car('police', x, y, Math.atan2(player.y - y, player.x - x), { color: '#1a1a2e' });
-      car.speed = 200;
+      const a = this.rng.range(0, Math.PI * 2);
+      const x = player.px + Math.cos(a) * WANTED.copSpawnRadius;
+      const y = player.py + Math.sin(a) * WANTED.copSpawnRadius;
+      const car = new Car('police', Math.max(40, Math.min(WORLD.size - 40, x)), Math.max(40, Math.min(WORLD.size - 40, y)), a, {
+        police: true, color: '#141428',
+      });
+      car.speed = 260;
       this.cars.push(car);
     }
     let visible = false;
     for (const car of this.cars) {
       if (car.dead) continue;
-      car.chaseStep(dt, player.x, player.y);
-      const d = Math.hypot(car.x - player.x, car.y - player.y);
-      if (d < 700) visible = true;
-      // A cop that rams the player hard deals damage.
-      if (d < 44 && Math.abs(car.speed) > 120) {
-        player.damage(8 * dt * 4, 'rammed by PBPD');
+      const d = Math.hypot(car.x - player.px, car.y - player.py);
+      if (d < 900) visible = true;
+      // Chase: steer toward the player, faster than traffic.
+      const want = Math.atan2(player.py - car.y, player.px - car.x);
+      let diff = want - car.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
+      const cruise = d > 260 ? car.spec.top : 320;
+      car.speed += Math.sign(cruise - car.speed) * 300 * dt;
+      car.x += Math.cos(car.angle) * car.speed * dt;
+      car.y += Math.sin(car.angle) * car.speed * dt;
+      // Ram the player: a hard hit on foot hurts, a hit on the car damages it.
+      if (d < 52 && car.hitCooldown <= 0) {
+        car.hitCooldown = 1.1;
+        if (player.car) {
+          player.car.damage(14);
+          car.damage(8);
+        } else {
+          player.damage(18, 'rammed by police');
+        }
       }
-      const hit = city.collideCircle(car.x, car.y, 14);
-      if (hit) {
-        car.angle += Math.PI / 3;
-        car.speed *= 0.5;
-      }
-      if (car.x < 40 || car.x > WORLD.size - 40 || car.y < 40 || car.y > WORLD.size - 40) {
-        car.angle += Math.PI;
-      }
+      car.hitCooldown = Math.max(0, car.hitCooldown - dt);
     }
-    this.cars = this.cars.filter((c) => !c.dead);
-    if (wanted.stars === 0) this.cars = [];
+    // At 3+ stars, cops take pot-shots when close — on foot you get hurt,
+    // in a car your car takes the damage instead.
+    this.shootTimer -= dt;
+    if (wanted.stars >= 3 && this.shootTimer <= 0 && this.cars.some((c) => !c.dead && Math.hypot(c.x - player.px, c.y - player.py) < 420)) {
+      this.shootTimer = 1.6;
+      if (!player.car) player.damage(9, 'police gunfire');
+      else player.car.damage(6);
+    }
+    // Remove wrecks and extras once the heat is gone.
+    this.cars = this.cars.filter((c) => !c.dead && (wanted.stars > 0 || Math.hypot(c.x - player.px, c.y - player.py) < 1400));
     return visible;
-  }
-
-  nearest(x, y, maxDist) {
-    let best = null;
-    let bestDist = maxDist;
-    for (const car of this.cars) {
-      const d = Math.hypot(car.x - x, car.y - y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = car;
-      }
-    }
-    return best;
   }
 }

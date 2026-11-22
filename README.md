@@ -4,22 +4,23 @@
 
 # Palmetto Bay
 
-An open-world crime game in the spirit of GTA 6, built for the [make.fun gta6-01 competition](https://make.fun/c/gta6-01). Play it in a desktop browser — no build step, no network, no external assets.
+An open-world crime game in the spirit of GTA 6, built for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01). Play it in a desktop browser — no build step, no network, no external assets.
 
 You are **Rook**, a driver new to the sun-soaked city of Palmetto Bay, working for fixer **Marla Vane**. Steal cars, outrun the PBPD, and run six story missions across seven districts, from Downtown to the Marina.
 
 ## What's in the game
 
-- **Open world** — a seeded 4800×4800 city: Downtown, Old Town, Marina, Harbor, Suburbs, North Park and Industrial, with roads, buildings, parks and water
+- **Open world** — a seeded 4800×4800 city: Downtown, Old Town, Marina, Harbor, Suburbs, North Park and Industrial, with roads, buildings, parks, water and a day/night cycle
 - **6 missions** — Keys to the City, Delivery Run, The Golden Marlin, Heat Wave, Bank Job, Last Ride, with cash rewards and a story arc
-- **6 car classes** — Coastal Sedan, Veloce Coupe, Hauler Truck, Mover Van, Falcon GT, plus the one-of-one gold **Golden Marlin**
-- **0–5 star wanted system** — crimes raise your heat, PBPD Interceptors spawn and chase, wanted decays when you stay out of sight
+- **7 car classes** — Coastal Sedan, Veloce Coupe, Hauler Truck, Mover Van, Falcon GT, PBPD Interceptor, plus the one-of-one gold **Golden Marlin**
+- **0–5 star wanted system** — crimes raise your heat, PBPD Interceptors spawn and chase, cops ram and shoot at high heat, wanted decays when you stay out of sight
 - **Traffic and pedestrians** — 16 traffic cars following the road grid, 26 pedestrians who flee and panic
-- **Combat** — punch, shoot with mouse aim, car damage, police ramming
+- **Combat** — punch, shoot with mouse aim, car damage and wrecks, police ramming
 - **8 stash chests** hidden around the city, each with cash
+- **Taxi fares** — a side job that pays while you drive between missions
 - **Shops** — Ray's Pay 'n Spray (repair + clear wanted) and the Gun Rack (ammo, armor, health)
-- **HUD + minimap + GPS** — wanted stars, health/armor, cash, mission objective, a live minimap and an arrow to your next marker
-- **Sound** — fully synthesized WebAudio: engine hum, sirens, gunshots, pickups, mission jingles and a driving bassline
+- **HUD + minimap + GPS** — wanted stars, health/armor, cash, mission objective, a live minimap, a clock, a district readout and an arrow to your next marker
+- **Sound** — fully synthesized WebAudio: engine hum, sirens, gunshots, pickups, mission jingles, a driving bassline and three radio stations (press R)
 - **Save / load** — press H; progress survives in localStorage
 
 ## Controls
@@ -34,6 +35,7 @@ You are **Rook**, a driver new to the sun-soaked city of Palmetto Bay, working f
 | Space | Handbrake |
 | M | Start the next mission |
 | Q | Open a shop menu when inside a shop |
+| R | Change radio station |
 | H | Save game |
 | P / Esc | Pause |
 | L | Continue from save (title screen) |
