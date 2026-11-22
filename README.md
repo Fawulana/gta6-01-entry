@@ -1,6 +1,6 @@
 [![gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/c/gta6-01)
-[![rank](https://make.fun/badge/gta6-01/Fawulana/gta6-01-entry-v8/rank.svg)](https://make.fun/c/gta6-01)
-[![reward](https://make.fun/badge/gta6-01/Fawulana/gta6-01-entry-v8/reward.svg)](https://make.fun/c/gta6-01)
+[![rank](https://make.fun/badge/gta6-01/Fawulana/gta6-01-entry/rank.svg)](https://make.fun/c/gta6-01)
+[![reward](https://make.fun/badge/gta6-01/Fawulana/gta6-01-entry/reward.svg)](https://make.fun/c/gta6-01)
 
 # Palmetto Bay
 
