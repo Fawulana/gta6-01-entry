@@ -1,6 +1,8 @@
-// Palmetto Bay — the shops. Pay 'n Spray repairs the car, repaints it and
-// wipes the wanted level; Ammu-Nation sells the pistol and ammo. Both are
-// used with E when Rico is close, and both need cash in hand.
+// Palmetto Bay — the shops.
+//
+// Pay 'n Spray repairs the car, repaints it and wipes the wanted level;
+// Ammu-Nation sells the pistol and ammo. Both are used with E when Rico
+// is close, and both need cash in hand.
 
 import { LANDMARKS, SHOP_PRICES, WEAPONS } from './config.js';
 import { distance } from './world.js';
@@ -12,8 +14,8 @@ export function shopAt(player) {
   return null;
 }
 
-// Use Pay 'n Spray: repairs and repaints the car Rico is driving (or his
-// own health of mind — it clears the wanted level either way).
+// Use Pay 'n Spray: repairs and repaints the car Rico is driving (or, on
+// foot, just clears the wanted level for the same price).
 export function useSprayShop(player, car, wanted) {
   if (!spendCash(player, SHOP_PRICES.spray)) return 'broke';
   if (car) {

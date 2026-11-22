@@ -1,6 +1,8 @@
-// Palmetto Bay — combat. Mouse-aimed shooting with bullets, enemy gang
-// members who shoot back, and explosions when a car dies. Bullets are
-// simple: a fast point that checks what it crosses each frame.
+// Palmetto Bay — combat.
+//
+// Mouse-aimed shooting with bullets, enemy gang members who shoot back,
+// and explosions when a car dies. Bullets are simple: a fast point that
+// checks what it crosses each frame.
 
 import { WEAPONS } from './config.js';
 import { distance, pointInBuilding } from './world.js';

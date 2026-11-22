@@ -1,8 +1,10 @@
-// Palmetto Bay — screenshot staging. The screenshots are real renders of
-// the game, staged deterministically: ?shot=start shows the title over the
-// city, ?shot=drive puts Rico in the gold Aurum GT on the boulevard,
-// ?shot=chase stages a three-star police chase, and ?shot=mission stages
-// a mission in progress with the GPS route. The seed fixes the city.
+// Palmetto Bay — screenshot staging.
+//
+// The screenshots are real renders of the game, staged deterministically:
+// ?shot=start shows the title over the city, ?shot=drive puts Rico in the
+// gold Aurum GT on the boulevard, ?shot=chase stages a three-star police
+// chase, and ?shot=mission stages a mission in progress with the GPS
+// route. The seed fixes the city.
 
 import { LANDMARKS } from './config.js';
 import { addHeat } from './police.js';

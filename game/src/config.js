@@ -1,15 +1,18 @@
-// Palmetto Bay — tuning constants, palettes, car classes, shops and story data.
-// One job: every number the rest of the game reads lives here, so balancing
-// the game means editing this file and nowhere else.
+// Palmetto Bay — every tunable number in one place.
+//
+// The rest of the game reads its balance from here: world size, the road
+// grid, the dusk palette, the car classes, wanted behaviour, shops and the
+// six story missions. Change the feel of the game by editing this file.
 
 export const WORLD_W = 3600;
 export const WORLD_H = 2600;
 export const ROAD_W = 64;
-export const ROAD_GAP = 400;
 export const BEACH_Y = 2320;
 export const WATER_Y = 2480;
+// Default city seed (the ?shot= staging overrides it with seed=1).
+export const START_SEED = 20261121;
 
-// Dusk palette: a sun-soaked coastal city at golden hour.
+// Golden-hour palette: a sun-soaked coastal city at dusk.
 export const PALETTE = {
   skyTop: '#2b1d4e',
   skyMid: '#e2603f',
@@ -21,8 +24,8 @@ export const PALETTE = {
   sand: '#e8cf9a',
   water: '#1f7a8c',
   waterDeep: '#155e75',
-  buildingRoof: '#8a5a44',
   buildingWall: '#c98f6b',
+  buildingRoof: '#8a5a44',
   towerGlass: '#7fb3d5',
   park: '#4a7c3f',
   player: '#ffd23f',
@@ -35,13 +38,13 @@ export const PALETTE = {
   hudGold: '#ffd23f',
 };
 
-// The roads: vertical and horizontal lines of the grid, in world units.
+// The road grid: nine vertical avenues, six horizontal streets.
 export const ROADS_X = [200, 600, 1000, 1400, 1800, 2200, 2600, 3000, 3400];
 export const ROADS_Y = [200, 600, 1000, 1400, 1800, 2200];
 
-// Five stealable car classes plus the gold Aurum GT. Speed is world units
+// Five stealable classes plus the gold Aurum GT. topSpeed is world units
 // per second at full throttle; grip 0..1 (higher turns tighter); hp is how
-// much punishment the car takes before it smokes and dies.
+// much damage the car takes before it smokes and dies.
 export const CAR_CLASSES = {
   sedan: { name: 'Palmetto Sedan', topSpeed: 340, accel: 210, grip: 0.62, hp: 100, w: 46, h: 22, colors: ['#c0392b', '#7f8c8d', '#2e86c1', '#e67e22'] },
   coupe: { name: 'Bayside Coupe', topSpeed: 380, accel: 240, grip: 0.7, hp: 80, w: 44, h: 20, colors: ['#8e44ad', '#16a085', '#d35400', '#f1c40f'] },
@@ -51,7 +54,7 @@ export const CAR_CLASSES = {
   aurum: { name: 'Aurum GT', topSpeed: 500, accel: 330, grip: 0.82, hp: 120, w: 46, h: 21, colors: ['#ffd700'] },
 };
 
-// On-foot and driving feel.
+// Rico on foot.
 export const PLAYER = {
   walkSpeed: 170,
   sprintSpeed: 260,
@@ -60,7 +63,7 @@ export const PLAYER = {
   startCash: 150,
 };
 
-// Wanted: how fast heat rises and falls, and how many cops each star fields.
+// Wanted: heat builds on crime and bleeds off when Rico lays low.
 export const WANTED = {
   stealHeat: 1,
   shootHeat: 1,
@@ -71,13 +74,13 @@ export const WANTED = {
   bustRadius: 26,
 };
 
-// Weapons and shops.
+// Weapons and shop prices.
 export const WEAPONS = {
   pistol: { name: 'Pistol', damage: 34, fireRate: 0.28, range: 420, price: 250, ammoPrice: 50, ammoPack: 12 },
 };
 export const SHOP_PRICES = { spray: 150, repair: 100 };
 
-// The eight stash chests hidden around Palmetto Bay.
+// Eight stash chests hidden around the city.
 export const STASH_CHESTS = [
   { x: 420, y: 420, cash: 250 },
   { x: 3180, y: 420, cash: 300 },
@@ -89,7 +92,7 @@ export const STASH_CHESTS = [
   { x: 2820, y: 2380, cash: 450 },
 ];
 
-// Landmarks: name, position, what the mission system and the map call them.
+// Named places: what the HUD, the minimap and the missions call them.
 export const LANDMARKS = {
   delgadoOffice: { name: "Delgado's Office", x: 1000, y: 600 },
   safehouse: { name: 'Rico Safehouse', x: 600, y: 1800 },
@@ -103,10 +106,10 @@ export const LANDMARKS = {
   downtown: { name: 'Downtown', x: 1800, y: 1200 },
 };
 
-// Six story missions. A step is one objective: goto (reach a marker),
-// steal (take a named car), shoot (drop N enemies), collect (grab N
-// packages), escape (drop the wanted level), deliver (reach a marker in a
-// car). Reward is paid on completion; failTimer seconds end the mission.
+// Six story missions. Step kinds: goto (reach a marker), steal (take the
+// named car), shoot (drop N enemies), collect (grab N packages), escape
+// (drop the wanted level), deliver (reach a marker while driving).
+// failTimer ends the mission when it runs out.
 export const MISSIONS = [
   {
     id: 1, title: 'Welcome Back', reward: 200,

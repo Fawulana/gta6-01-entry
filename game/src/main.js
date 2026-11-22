@@ -1,7 +1,8 @@
-// Palmetto Bay — the game loop and state machine. This file creates the
-// game, runs it, and owns the moments where systems meet: entering a car,
-// stealing, getting busted, finishing a mission. Each system lives in its
-// own file; this one only conducts them.
+// Palmetto Bay — the game loop and state machine.
+//
+// This file creates the game, runs it, and owns the moments where systems
+// meet: entering a car, stealing, getting busted, finishing a mission.
+// Each system lives in its own file; this one only conducts them.
 
 import { LANDMARKS, MISSIONS, WANTED } from './config.js';
 import { createAudio, playBusted, playCrash, playMissionComplete, playPickup, playShot, resumeAudio, setMuted, updateEngineSound, updateMusic, updateSiren } from './audio.js';
@@ -13,13 +14,13 @@ import { chestAt, chestsTaken, createChests, createPickups, dropPickup, pickupAt
 import { removePed, pedHitByCar, spawnPed, updatePeds } from './peds.js';
 import { addCash, createPlayer, damagePlayer, healPlayer, spendCash, updatePlayerOnFoot } from './player.js';
 import { addHeat, clearWanted, createWanted, spawnCopCar, spawnFootCop, updateBust, updateCopCar, updateFootCop, updateWanted, wantedCopCount } from './police.js';
-import { mulberry32 } from './random.js';
 import { createRenderer, renderWorld } from './render.js';
 import { loadGame, saveGame } from './save.js';
 import { parseShotParams, stageShot } from './shots.js';
 import { ammoShopLabel, shopAt, sprayShopLabel, useAmmoShop, useSprayShop } from './shops.js';
 import { carOverlaps, makeCar, nearestCar, spawnTrafficCar, updateDrivenCar, updateTrafficCar } from './vehicles.js';
 import { distance, generateWorld } from './world.js';
+import { START_SEED } from './config.js';
 
 const SAVE_INTERVAL = 10;
 const TRAFFIC_TARGET = 14;
@@ -57,6 +58,8 @@ function createGame(seed) {
     time: 0,
     cam: null,
     killBase: 0,
+    lastDrops: 0,
+    chestsTakenCount: 0,
   };
   if (saved) {
     for (const id of saved.chestsTaken) {
@@ -384,7 +387,6 @@ function updatePlaying(game, input, edges, dt) {
   }
 }
 
-// Imports used only inside updatePlaying, hoisted by the module system.
 function boot() {
   const canvas = document.getElementById('game');
   canvas.width = window.innerWidth;
@@ -392,7 +394,7 @@ function boot() {
   const renderer = createRenderer(canvas);
   const input = createInput(canvas);
   const shot = parseShotParams(window.location.search);
-  const seed = shot ? shot.seed : 20261121;
+  const seed = shot ? shot.seed : START_SEED;
   const game = createGame(seed);
   game.audio = createAudio();
   game.renderer = renderer;

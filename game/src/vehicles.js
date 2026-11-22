@@ -1,7 +1,9 @@
-// Palmetto Bay — cars. Car classes and traffic come from here, and so does
-// the driving model: arcade steering where the car turns in proportion to
-// its speed, with a little drift, and traffic that follows the road grid
-// and brakes for what is ahead of it.
+// Palmetto Bay — cars.
+//
+// Car classes and traffic live here, and so does the driving model: arcade
+// steering where the car turns in proportion to its speed, with a little
+// drift, and traffic that follows the road grid and brakes for what is
+// ahead of it.
 
 import { CAR_CLASSES, ROADS_X, ROADS_Y, ROAD_W } from './config.js';
 import { distance, isOnRoad, isSand, isWater, nearestRoadPoint, resolveCircleVsBuildings } from './world.js';
@@ -80,8 +82,8 @@ export function updateDrivenCar(car, input, world, dt) {
   }
   car.x = Math.max(30, Math.min(3570, car.x));
   car.y = Math.max(30, Math.min(2570, car.y));
-  if (car.hp < car.maxHp * 0.35) car.smoke = 1;
-  else if (car.hp <= 0) car.smoke = 2;
+  if (car.hp <= 0) car.smoke = 2;
+  else if (car.hp < car.maxHp * 0.35) car.smoke = 1;
   return forward;
 }
 

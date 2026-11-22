@@ -1,7 +1,9 @@
-// Palmetto Bay — the HUD. Everything on screen that is not the world:
-// cash and health, wanted stars, ammo, the mission objective, the minimap
-// with its GPS route, and the menus (title, pause, busted, wasted, mission
-// complete). The minimap draws the same city the renderer draws, shrunk.
+// Palmetto Bay — the HUD.
+//
+// Everything on screen that is not the world: cash and health, wanted
+// stars, ammo, the mission objective, the minimap with its GPS route, and
+// the menus (title, pause, busted, wasted, mission complete). The minimap
+// draws the same city the renderer draws, shrunk.
 
 import { BEACH_Y, LANDMARKS, PALETTE, ROADS_X, ROADS_Y, ROAD_W, WATER_Y, WORLD_H, WORLD_W } from './config.js';
 
@@ -197,7 +199,7 @@ export function drawTitleScreen(ctx, canvas, game) {
 
 export function drawPauseScreen(ctx, canvas, game) {
   menuPanel(ctx, canvas, 'PAUSED', [
-    `Cash $${game.player.cash.toLocaleString()}   •   Missions ${game.missionsDone.length}/6   •   Chests ${game.chestsTakenCount}/8`,
+    `Cash $${game.player.cash.toLocaleString()}   •   Missions ${game.missionsDone.length}/6   •   Chests ${game.chestsTakenCount ?? 0}/8`,
     '',
     'P / Esc resume   •   Click resume',
   ]);

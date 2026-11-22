@@ -1,6 +1,7 @@
-// Palmetto Bay — seeded random numbers. The city layout, traffic colours
-// and pedestrian looks all come from one seed, so the same seed always
-// builds the same Palmetto Bay. Gameplay randomness (traffic spawns, ped
+// Palmetto Bay — seeded randomness.
+//
+// One seed builds the same city every time: the layout, the building
+// colours, the palm rows. Moment-to-moment chaos (traffic spawns, ped
 // chatter) uses Math.random and is not part of the layout.
 
 export function mulberry32(seed) {

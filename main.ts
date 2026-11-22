@@ -1,4 +1,5 @@
 // Palmetto Bay — gta6-01 entry program (Node 22, standard library only).
+//
 // Hands the game in: copies this directory's game/ and screenshots/ to the
 // output directory and writes /output/dossier.json with make.fun's vendored
 // dossier library. Run it as the grader does:

@@ -1,5 +1,7 @@
-// Palmetto Bay — keyboard and mouse. One job: turn browser events into a
-// plain state object the game loop reads. No game logic lives here.
+// Palmetto Bay — keyboard and mouse.
+//
+// One job: turn browser events into a plain state object the game loop
+// reads. No game logic lives here.
 
 export function createInput(canvas) {
   const input = {
@@ -21,6 +23,7 @@ export function createInput(canvas) {
     if (name) { input[name] = true; e.preventDefault(); }
     if (e.code === 'KeyE' && !e.repeat) input.interact = true;
     if (e.code === 'Enter' && !e.repeat) input.confirm = true;
+    if (e.code === 'Space' && !e.repeat) input.confirm = true;
     if ((e.code === 'KeyP' || e.code === 'Escape') && !e.repeat) input.pause = true;
     if (e.code === 'KeyM' && !e.repeat) input.mute = true;
   }

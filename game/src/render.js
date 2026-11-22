@@ -1,8 +1,10 @@
-// Palmetto Bay — the renderer. One job: draw the world on the canvas.
-// The camera follows Rico (or his car), the dusk light warms everything,
-// and every system the game has shows up here: traffic, peds, police,
-// missions, chests, shops and the GPS route. The HUD and minimap live in
-// hud.js; this file only draws the world itself.
+// Palmetto Bay — the renderer.
+//
+// One job: draw the world on the canvas. The camera follows Rico (or his
+// car), the dusk light warms everything, and every system the game has
+// shows up here: traffic, peds, police, missions, chests, shops and the
+// GPS route. The HUD and minimap live in hud.js; this file only draws the
+// world itself.
 
 import { BEACH_Y, PALETTE, ROADS_X, ROADS_Y, ROAD_W, WATER_Y, WORLD_H, WORLD_W } from './config.js';
 import { isOnRoad } from './world.js';
@@ -142,6 +144,16 @@ function drawBuildings(ctx, world, time) {
   }
 }
 
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 export function drawCarShape(ctx, car, isPlayerCar) {
   ctx.save();
   ctx.translate(car.x, car.y);
@@ -153,11 +165,11 @@ export function drawCarShape(ctx, car, isPlayerCar) {
   ctx.fillRect(-w / 2 + 3, -h / 2 + 4, w, h);
   // Body.
   ctx.fillStyle = car.color;
-  roundRect(ctx, -w / 2, -h / 2, w, h, 7);
+  roundRectPath(ctx, -w / 2, -h / 2, w, h, 7);
   ctx.fill();
   // Cabin and windshield.
   ctx.fillStyle = 'rgba(20, 24, 40, 0.85)';
-  roundRect(ctx, -w * 0.12, -h / 2 + 3, w * 0.3, h - 6, 4);
+  roundRectPath(ctx, -w * 0.12, -h / 2 + 3, w * 0.3, h - 6, 4);
   ctx.fill();
   ctx.fillStyle = 'rgba(140, 200, 235, 0.9)';
   ctx.fillRect(w * 0.18, -h / 2 + 4, 3, h - 8);
@@ -200,21 +212,11 @@ export function drawCarShape(ctx, car, isPlayerCar) {
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 5]);
-    roundRect(ctx, -w / 2 - 5, -h / 2 - 5, w + 10, h + 10, 9);
+    roundRectPath(ctx, -w / 2 - 5, -h / 2 - 5, w + 10, h + 10, 9);
     ctx.stroke();
     ctx.setLineDash([]);
   }
   ctx.restore();
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 export function drawPedFigure(ctx, x, y, angle, color, radius, label) {
@@ -276,10 +278,8 @@ function drawMarker(ctx, x, y, label, pulse) {
 // at intersections (Manhattan path through the nearest roads).
 export function drawGpsRoute(ctx, fromX, fromY, toX, toY) {
   const points = [{ x: fromX, y: fromY }];
-  const midX = toX;
-  const midY = fromY;
   if (Math.abs(fromX - toX) > 30 && Math.abs(fromY - toY) > 30) {
-    points.push({ x: midX, y: midY });
+    points.push({ x: toX, y: fromY });
   }
   points.push({ x: toX, y: toY });
   ctx.save();
@@ -292,6 +292,15 @@ export function drawGpsRoute(ctx, fromX, fromY, toX, toY) {
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
   ctx.restore();
+}
+
+function drawShopSign(ctx, x, y, text) {
+  ctx.fillStyle = '#20202c';
+  ctx.fillRect(x - 70, y - 46, 140, 22);
+  ctx.fillStyle = '#ffd23f';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x, y - 31);
 }
 
 export function renderWorld(renderer, game, time) {
@@ -407,15 +416,6 @@ export function renderWorld(renderer, game, time) {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   return cam;
-}
-
-function drawShopSign(ctx, x, y, text) {
-  ctx.fillStyle = '#20202c';
-  ctx.fillRect(x - 70, y - 46, 140, 22);
-  ctx.fillStyle = '#ffd23f';
-  ctx.font = 'bold 11px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(text, x, y - 31);
 }
 
 export function worldToScreen(cam, x, y) {

@@ -1,6 +1,8 @@
-// Palmetto Bay — pedestrians. They stroll the sidewalks, cross at
-// intersections, and run when shots ring out or a car bears down on them.
-// A pedestrian hit by a car at speed is a crime the wanted system notices.
+// Palmetto Bay — pedestrians.
+//
+// They stroll the sidewalks, cross at intersections, and run when shots
+// ring out or a car bears down on them. A pedestrian hit by a car at speed
+// is a crime the wanted system notices.
 
 import { WORLD_H, WORLD_W } from './config.js';
 import { distance, isWater, nearestRoadPoint, resolveCircleVsBuildings } from './world.js';

@@ -1,7 +1,9 @@
-// Palmetto Bay — the story. Six missions from config.js, each a chain of
-// steps the player works through. This file owns the mission runtime: what
-// the current step asks, when a step completes, what a mission pays, and
-// what failing one costs. The game loop asks it every frame.
+// Palmetto Bay — the story.
+//
+// Six missions from config.js, each a chain of steps the player works
+// through. This file owns the mission runtime: what the current step asks,
+// when a step completes, what a mission pays, and what failing one costs.
+// The game loop asks it every frame.
 
 import { MISSIONS } from './config.js';
 import { distance } from './world.js';
@@ -16,7 +18,6 @@ export function createMissionState() {
     count: 0,
     message: '',
     messageTimer: 0,
-    enemiesLeft: 0,
     packages: [],
   };
 }
@@ -40,7 +41,6 @@ export function startMission(state, index) {
   state.done = false;
   state.timer = mission.failTimer ?? 0;
   state.count = 0;
-  state.enemiesLeft = 0;
   state.packages = [];
   state.message = mission.title;
   state.messageTimer = 3;

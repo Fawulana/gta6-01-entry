@@ -1,6 +1,7 @@
-// Palmetto Bay — Rico Vega on foot. Movement, sprint, health, cash and
-// the enter/exit-car handoff. Driving physics lives in vehicles.js; this
-// file is only the man himself.
+// Palmetto Bay — Rico Vega on foot.
+//
+// Movement, sprint, health, cash and the enter/exit-car handoff. Driving
+// physics lives in vehicles.js; this file is only the man himself.
 
 import { PLAYER } from './config.js';
 import { clampToWorld, isWater, resolveCircleVsBuildings } from './world.js';

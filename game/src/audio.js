@@ -1,6 +1,8 @@
-// Palmetto Bay — sound. Everything is synthesized with WebAudio: no audio
-// files, no network. Engine hum follows the car's speed, sirens wail in two
-// tones, gunshots are filtered noise, and a lazy bassline loops under it all.
+// Palmetto Bay — sound.
+//
+// Everything is synthesized with WebAudio: no audio files, no network.
+// Engine hum follows the car's speed, sirens wail in two tones, gunshots
+// are filtered noise, and a lazy bassline loops under it all.
 
 export function createAudio() {
   return {
@@ -130,7 +132,7 @@ export function updateSiren(audio, wantedStars, dt) {
   }
 }
 
-// A lazy bassline: A minor walk, one note per beat, quiet under the action.
+// A lazy bassline: an A-minor walk, one note per beat, quiet under the action.
 const BASSLINE = [55, 55, 65.4, 49, 55, 55, 82.4, 73.4];
 
 export function updateMusic(audio, dt) {

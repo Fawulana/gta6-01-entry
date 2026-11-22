@@ -1,6 +1,8 @@
-// Palmetto Bay — stash chests and pickups. Eight chests hide around the
-// city (positions in config.js); each pays cash once. Health and ammo
-// pickups drop from defeated enemies and respawn at fixed spots.
+// Palmetto Bay — stash chests and pickups.
+//
+// Eight chests hide around the city (positions in config.js); each pays
+// cash once. Health and ammo pickups drop from defeated enemies and
+// respawn at fixed spots.
 
 import { STASH_CHESTS } from './config.js';
 import { distance } from './world.js';

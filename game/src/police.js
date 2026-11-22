@@ -1,7 +1,8 @@
-// Palmetto Bay — the wanted system and the police. Stars rise on crime
-// and fall when Rico lays low; each star fields more police, who chase in
-// cars, ram, and bust Rico when they catch him slow or on foot. Pay 'n
-// Spray wipes the slate for cash.
+// Palmetto Bay — the wanted system and the police.
+//
+// Stars rise on crime and fall when Rico lays low; each star fields more
+// police, who chase in cars, ram, and bust Rico when they catch him slow
+// or on foot. Pay 'n Spray wipes the slate for cash.
 
 import { WANTED } from './config.js';
 import { angleTo, distance, roadSpawnNear } from './world.js';

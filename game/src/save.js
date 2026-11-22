@@ -1,19 +1,22 @@
-// Palmetto Bay — persistence. Progress auto-saves to localStorage: cash,
-// missions completed, chests taken, and best stats. A save is a small JSON
-// object under one key; a corrupt or missing save starts fresh.
+// Palmetto Bay — persistence.
+//
+// Progress auto-saves to localStorage: cash, missions completed, chests
+// taken, and best stats. A save is a small JSON object under one slot; a
+// corrupt or missing save starts fresh.
 
-const SAVE_KEY = 'palmetto-bay-save-v6';
+const SAVE_SLOT = 'palmetto-bay-save-v6r';
 
 export function saveGame(state) {
   try {
     const data = {
+      version: 1,
       cash: state.player.cash,
       missionsDone: state.missionsDone,
       chestsTaken: state.chests.filter((c) => c.taken).map((c) => c.id),
       bestCash: state.bestCash,
       totalEarned: state.totalEarned,
     };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    localStorage.setItem(SAVE_SLOT, JSON.stringify(data));
     return true;
   } catch {
     return false;
@@ -22,7 +25,7 @@ export function saveGame(state) {
 
 export function loadGame() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(SAVE_SLOT);
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (typeof data !== 'object' || data === null) return null;
@@ -40,7 +43,7 @@ export function loadGame() {
 
 export function clearSave() {
   try {
-    localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(SAVE_SLOT);
   } catch {
     // A browser that refuses storage just plays without a save.
   }

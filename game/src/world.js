@@ -1,12 +1,14 @@
-// Palmetto Bay — the city itself. generateWorld builds the same city from
-// the same seed every time: road grid, blocks, buildings, parks, palms and
-// the beach. The rest of the game asks this file where things are and what
-// blocks movement; it never invents layout of its own.
+// Palmetto Bay — the city itself.
+//
+// generateWorld builds the same city from the same seed every time: the
+// road grid, the blocks, downtown towers, parks, palms and the beach.
+// Everything else asks this file where things are and what blocks movement;
+// no other file invents layout.
 
-import { BEACH_Y, ROADS_X, ROADS_Y, ROAD_W, WORLD_H, WORLD_W, WATER_Y } from './config.js';
+import { BEACH_Y, ROADS_X, ROADS_Y, ROAD_W, WATER_Y, WORLD_H, WORLD_W } from './config.js';
 import { mulberry32, randomChance, randomInt, randomPick, randomRange } from './random.js';
 
-const BUILDING_COLORS = ['#c98f6b', '#b5654a', '#d9a05b', '#a9715c', '#e0b184', '#8f6b8a', '#6b8fa3'];
+const WALL_COLORS = ['#c98f6b', '#b5654a', '#d9a05b', '#a9715c', '#e0b184', '#8f6b8a', '#6b8fa3'];
 const ROOF_COLORS = ['#7a4a3a', '#5d4037', '#6d4c41', '#4e342e'];
 const PARK_SPOTS = [
   { x: 800, y: 800, w: 160, h: 160 },
@@ -27,7 +29,7 @@ export function generateWorld(seed) {
       const bx0 = ROADS_X[ix] + ROAD_W / 2 + 24;
       const by0 = ROADS_Y[iy] + ROAD_W / 2 + 24;
       const bx1 = ROADS_X[ix + 1] - ROAD_W / 2 - 24;
-      const by1 = ROADS_Y[iy] + 1 < ROADS_Y.length ? ROADS_Y[iy + 1] - ROAD_W / 2 - 24 : 0;
+      const by1 = iy + 1 < ROADS_Y.length ? ROADS_Y[iy + 1] - ROAD_W / 2 - 24 : 0;
       if (by0 >= BEACH_Y - 40) continue;
       const cx = (ROADS_X[ix] + ROADS_X[ix + 1]) / 2;
       const cy = (ROADS_Y[iy] + ROADS_Y[iy + 1]) / 2;
@@ -44,7 +46,7 @@ export function generateWorld(seed) {
           x, y, w, h,
           tall: downtown,
           floors: downtown ? randomInt(rng, 8, 18) : randomInt(rng, 1, 3),
-          color: downtown ? '#7fb3d5' : randomPick(rng, BUILDING_COLORS),
+          color: downtown ? '#7fb3d5' : randomPick(rng, WALL_COLORS),
           roof: randomPick(rng, ROOF_COLORS),
         });
       }
@@ -79,7 +81,7 @@ export function pointInBuilding(world, x, y) {
   return null;
 }
 
-// Push a circle out of any building it overlaps; returns true when pushed.
+// Push a circle out of any building it overlaps; true when it moved.
 export function resolveCircleVsBuildings(world, body, r) {
   let pushed = false;
   for (const b of world.buildings) {
@@ -121,8 +123,8 @@ export function isOnRoad(x, y) {
   return onV || onH;
 }
 
-// The nearest point on any road centreline, and whether that road runs
-// vertically. Traffic and the GPS route both steer by this.
+// Nearest point on any road centreline, and whether that road is vertical.
+// Traffic and the GPS route both steer by this.
 export function nearestRoadPoint(x, y) {
   let best = null;
   let bestD = Infinity;
