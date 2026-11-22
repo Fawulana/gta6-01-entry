@@ -1,110 +1,106 @@
-// Palmetto Bay — the wanted system and the police.
-//
-// Stars rise on crime and fall when Rico lays low; each star fields more
-// police, who chase in cars, ram, and bust Rico when they catch him slow
-// or on foot. Pay 'n Spray wipes the slate for cash.
-
+// The wanted system: 0 to 5 stars. Crimes raise it, police cars spawn and
+// chase, and it cools down when the player stays out of trouble — or drops
+// instantly at a Pay 'n Spray.
 import { WANTED } from './config.js';
-import { angleTo, distance, roadSpawnNear } from './world.js';
+import { Car } from './vehicles.js';
+import { WORLD } from './config.js';
 
-let nextCopId = 1;
+export class Wanted {
+  constructor() {
+    this.stars = 0;
+    this.heat = 0; // 0..1 within the current star level
+    this.quietTimer = 0;
+    this.sirenTimer = 0;
+  }
 
-export function createWanted() {
-  return { stars: 0, heat: 0, bustTimer: 0 };
-}
+  addCrime(level, reason) {
+    if (level <= 0) return;
+    this.stars = Math.min(WANTED.maxStars, this.stars + level);
+    this.heat = 1;
+    this.quietTimer = 0;
+    this.lastReason = reason;
+  }
 
-export function addHeat(wanted, amount) {
-  wanted.heat = Math.min(5, wanted.heat + amount);
-  wanted.stars = Math.ceil(wanted.heat);
-}
+  clear() {
+    this.stars = 0;
+    this.heat = 0;
+    this.quietTimer = 0;
+  }
 
-export function clearWanted(wanted) {
-  wanted.heat = 0;
-  wanted.stars = 0;
-  wanted.bustTimer = 0;
-}
-
-export function updateWanted(wanted, dt) {
-  if (wanted.heat > 0) {
-    wanted.heat = Math.max(0, wanted.heat - WANTED.decayPerSec * dt);
-    wanted.stars = Math.ceil(wanted.heat);
+  step(dt, policeVisible) {
+    if (this.stars === 0) return;
+    if (policeVisible) {
+      this.quietTimer = 0;
+      this.heat = Math.min(1, this.heat + dt * 0.05);
+      return;
+    }
+    this.quietTimer += dt;
+    if (this.quietTimer > WANTED.decaySeconds) {
+      this.stars -= 1;
+      this.heat = 0.5;
+      this.quietTimer = 0;
+    }
   }
 }
 
-// How many cop cars the current heat fields.
-export function wantedCopCount(wanted) {
-  return WANTED.starsForCops[Math.min(5, wanted.stars)] ?? 0;
-}
-
-export function spawnCopCar(wanted, player, rng) {
-  const spot = roadSpawnNear(player.x + (rng() < 0.5 ? -700 : 700), player.y + (rng() < 0.5 ? -500 : 500), rng() < 0.5 ? -1 : 1);
-  return {
-    id: nextCopId++,
-    kind: 'cop',
-    x: spot.x, y: spot.y,
-    angle: angleTo(spot.x, spot.y, player.x, player.y),
-    speed: 0,
-    topSpeed: WANTED.copCarSpeed,
-    accel: 320,
-    grip: 0.72,
-    hp: 160, maxHp: 160,
-    w: 46, h: 22,
-    color: '#2f6fd0',
-    traffic: false,
-    smoke: 0,
-    siren: rng() * 2,
-  };
-}
-
-export function spawnFootCop(wanted, player, rng) {
-  const a = rng() * Math.PI * 2;
-  return {
-    id: nextCopId++,
-    kind: 'footcop',
-    x: player.x + Math.cos(a) * 320,
-    y: player.y + Math.sin(a) * 320,
-    angle: angleTo(player.x + Math.cos(a) * 320, player.y + Math.sin(a) * 320, player.x, player.y),
-    speed: 0,
-    hp: 50,
-    color: '#1d4ed8',
-    state: 'chase',
-  };
-}
-
-// A cop car steers at the player and rams; returns true when it touches.
-export function updateCopCar(cop, player, playerCar, world, dt) {
-  const tx = playerCar ? playerCar.x : player.x;
-  const ty = playerCar ? playerCar.y : player.y;
-  const want = angleTo(cop.x, cop.y, tx, ty);
-  let diff = want - cop.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  cop.angle += Math.max(-2.8 * dt, Math.min(2.8 * dt, diff * 3 * dt));
-  cop.speed += cop.accel * dt;
-  if (cop.speed > cop.topSpeed) cop.speed = cop.topSpeed;
-  cop.x += Math.cos(cop.angle) * cop.speed * dt;
-  cop.y += Math.sin(cop.angle) * cop.speed * dt;
-  cop.siren += dt;
-  const d = distance(cop.x, cop.y, tx, ty);
-  return d < 40;
-}
-
-export function updateFootCop(cop, player, dt) {
-  const want = angleTo(cop.x, cop.y, player.x, player.y);
-  cop.angle = want;
-  const speed = 150;
-  cop.x += Math.cos(want) * speed * dt;
-  cop.y += Math.sin(want) * speed * dt;
-  return distance(cop.x, cop.y, player.x, player.y) < WANTED.bustRadius;
-}
-
-// The bust rule: a cop touching Rico while he is slow or on foot starts
-// the bust timer; three seconds of contact and he is busted.
-export function updateBust(wanted, touching, dt) {
-  if (!touching) {
-    wanted.bustTimer = 0;
-    return false;
+export class Police {
+  constructor(seed) {
+    this.cars = [];
+    this.spawnTimer = 0;
+    this.seed = seed;
   }
-  wanted.bustTimer += dt;
-  return wanted.bustTimer >= 3;
+
+  wantedCount(stars) {
+    return WANTED.policePerStar[Math.min(stars, WANTED.maxStars)];
+  }
+
+  step(dt, player, wanted, city) {
+    const want = this.wantedCount(wanted.stars);
+    this.spawnTimer -= dt;
+    if (this.cars.length < want && this.spawnTimer <= 0) {
+      this.spawnTimer = 1.2;
+      const angle = Math.random() * Math.PI * 2;
+      const r = WANTED.copSpawnRadius;
+      const x = player.x + Math.cos(angle) * r;
+      const y = player.y + Math.sin(angle) * r;
+      const car = new Car('police', x, y, Math.atan2(player.y - y, player.x - x), { color: '#1a1a2e' });
+      car.speed = 200;
+      this.cars.push(car);
+    }
+    let visible = false;
+    for (const car of this.cars) {
+      if (car.dead) continue;
+      car.chaseStep(dt, player.x, player.y);
+      const d = Math.hypot(car.x - player.x, car.y - player.y);
+      if (d < 700) visible = true;
+      // A cop that rams the player hard deals damage.
+      if (d < 44 && Math.abs(car.speed) > 120) {
+        player.damage(8 * dt * 4, 'rammed by PBPD');
+      }
+      const hit = city.collideCircle(car.x, car.y, 14);
+      if (hit) {
+        car.angle += Math.PI / 3;
+        car.speed *= 0.5;
+      }
+      if (car.x < 40 || car.x > WORLD.size - 40 || car.y < 40 || car.y > WORLD.size - 40) {
+        car.angle += Math.PI;
+      }
+    }
+    this.cars = this.cars.filter((c) => !c.dead);
+    if (wanted.stars === 0) this.cars = [];
+    return visible;
+  }
+
+  nearest(x, y, maxDist) {
+    let best = null;
+    let bestDist = maxDist;
+    for (const car of this.cars) {
+      const d = Math.hypot(car.x - x, car.y - y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = car;
+      }
+    }
+    return best;
+  }
 }

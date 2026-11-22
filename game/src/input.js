@@ -1,71 +1,65 @@
-// Palmetto Bay — keyboard and mouse.
-//
-// One job: turn browser events into a plain state object the game loop
-// reads. No game logic lives here.
-
-export function createInput(canvas) {
-  const input = {
-    up: false, down: false, left: false, right: false, sprint: false,
-    interact: false, pause: false, mute: false, confirm: false,
-    mouseX: 0, mouseY: 0, mouseDown: false, mouseClicked: false,
-  };
-
-  const KEYMAP = {
-    KeyW: 'up', ArrowUp: 'up',
-    KeyS: 'down', ArrowDown: 'down',
-    KeyA: 'left', ArrowLeft: 'left',
-    KeyD: 'right', ArrowRight: 'right',
-    ShiftLeft: 'sprint', ShiftRight: 'sprint',
-  };
-
-  function onKeyDown(e) {
-    const name = KEYMAP[e.code];
-    if (name) { input[name] = true; e.preventDefault(); }
-    if (e.code === 'KeyE' && !e.repeat) input.interact = true;
-    if (e.code === 'Enter' && !e.repeat) input.confirm = true;
-    if (e.code === 'Space' && !e.repeat) input.confirm = true;
-    if ((e.code === 'KeyP' || e.code === 'Escape') && !e.repeat) input.pause = true;
-    if (e.code === 'KeyM' && !e.repeat) input.mute = true;
+// Keyboard and mouse input, with a small queue of pressed keys so the game
+// can react to single taps (enter car, shoot, pause) as well as held keys.
+export class Input {
+  constructor(canvas) {
+    this.keys = new Set();
+    this.pressed = new Set();
+    this.mouseX = 0;
+    this.mouseY = 0;
+    this.mouseDown = false;
+    this.mouseClicked = false;
+    this.canvas = canvas;
+    this.onKey = null;
+    window.addEventListener('keydown', (event) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) event.preventDefault();
+      if (!event.repeat) this.pressed.add(event.code);
+      this.keys.add(event.code);
+      if (this.onKey) this.onKey(event.code);
+    });
+    window.addEventListener('keyup', (event) => {
+      this.keys.delete(event.code);
+    });
+    canvas.addEventListener('mousemove', (event) => {
+      const rect = canvas.getBoundingClientRect();
+      this.mouseX = event.clientX - rect.left;
+      this.mouseY = event.clientY - rect.top;
+    });
+    canvas.addEventListener('mousedown', (event) => {
+      if (event.button === 0) {
+        this.mouseDown = true;
+        this.mouseClicked = true;
+      }
+    });
+    window.addEventListener('mouseup', (event) => {
+      if (event.button === 0) this.mouseDown = false;
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.mouseDown = false;
+    });
   }
 
-  function onKeyUp(e) {
-    const name = KEYMAP[e.code];
-    if (name) input[name] = false;
+  down(...codes) {
+    return codes.some((code) => this.keys.has(code));
   }
 
-  function onMouseMove(e) {
-    const rect = canvas.getBoundingClientRect();
-    input.mouseX = e.clientX - rect.left;
-    input.mouseY = e.clientY - rect.top;
+  // True once per physical key press; consumed at the end of each frame.
+  hit(...codes) {
+    return codes.some((code) => this.pressed.has(code));
   }
 
-  function onMouseDown(e) {
-    if (e.button === 0) {
-      input.mouseDown = true;
-      input.mouseClicked = true;
+  // Synthetic input used by the ?autotest= harness and the screenshot pilot.
+  inject(code, isDown) {
+    if (isDown) {
+      this.keys.add(code);
+      this.pressed.add(code);
+    } else {
+      this.keys.delete(code);
     }
   }
 
-  function onMouseUp(e) {
-    if (e.button === 0) input.mouseDown = false;
+  endFrame() {
+    this.pressed.clear();
+    this.mouseClicked = false;
   }
-
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
-
-  // One-frame edge triggers, consumed by the game loop each frame.
-  input.consumeEdges = function consumeEdges() {
-    const edges = { interact: input.interact, pause: input.pause, mute: input.mute, confirm: input.confirm, click: input.mouseClicked };
-    input.interact = false;
-    input.pause = false;
-    input.mute = false;
-    input.confirm = false;
-    input.mouseClicked = false;
-    return edges;
-  };
-
-  return input;
 }

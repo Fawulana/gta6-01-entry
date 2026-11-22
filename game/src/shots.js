@@ -1,72 +1,90 @@
-// Palmetto Bay — screenshot staging.
-//
-// The screenshots are real renders of the game, staged deterministically:
-// ?shot=start shows the title over the city, ?shot=drive puts Rico in the
-// gold Aurum GT on the boulevard, ?shot=chase stages a three-star police
-// chase, and ?shot=mission stages a mission in progress with the GPS
-// route. The seed fixes the city.
+// Deterministic screenshot scenes behind ?shot=start|play|chase|mission.
+// Each one builds a fresh world from the fixed seed, places the player and
+// the systems the scene shows, and steps the world a short fixed amount, so
+// the same URL always renders the same frame.
+import { createGame } from './game.js';
+import { SCREEN_TITLE, SCREEN_PLAY } from './render.js';
 
-import { LANDMARKS } from './config.js';
-import { addHeat } from './police.js';
-import { makeCar } from './vehicles.js';
-
-export function parseShotParams(search) {
-  const q = new URLSearchParams(search);
-  const shot = q.get('shot');
-  if (!shot) return null;
-  const seed = Number(q.get('seed') ?? '1');
-  return { shot, seed: Number.isFinite(seed) ? seed : 1 };
+function placeInCar(game, cls, x, y, angle, speed) {
+  const car = game.parkedCars.find((c) => c.cls === cls) || game.parkedCars[0];
+  car.x = x;
+  car.y = y;
+  car.angle = angle;
+  car.speed = speed;
+  car.parked = false;
+  game.player.enterCar(car);
+  return car;
 }
 
-// Stage a scene into the live game state. Called once, right after the
-// game is created and before the first frame.
-export function stageShot(game, shot) {
-  const p = game.player;
-  if (shot === 'start') {
-    // Title screen over downtown: Rico on foot by the marina road.
-    p.x = 1800;
-    p.y = 1150;
-    p.angle = Math.PI / 2;
-    game.state = 'title';
-    return;
+import { Car } from './vehicles.js';
+
+function spawnCops(game, spots) {
+  for (const [x, y] of spots) {
+    const car = new Car('police', x, y, Math.atan2(game.player.py - y, game.player.px - x), { color: '#1a1a2e' });
+    car.speed = 220;
+    game.police.cars.push(car);
   }
-  if (shot === 'drive') {
-    // Rico driving the gold Aurum GT down the main boulevard, traffic around.
-    const gt = makeCar('aurum', 1800, 1000, 0, '#ffd700');
-    gt.speed = 380;
-    game.cars.push(gt);
-    p.inCar = gt;
-    p.x = gt.x;
-    p.y = gt.y;
-    game.state = 'playing';
-    return;
+}
+
+export function stageShot(name, renderer) {
+  const game = createGame();
+  game.rendererCamera = renderer.camera;
+  game.sound.muted = true;
+  const step = 1 / 60;
+
+  if (name === 'play') {
+    // Mid-drive downtown: mission 1 active, traffic on the roads.
+    game.missions.startNext();
+    placeInCar(game, 'coupe', 1200, 1200, 0, 230);
+    for (let i = 0; i < 150; i += 1) {
+      game.traffic.step(step, game.city, game.player.car);
+      game.crowd.step(step, game.city, null);
+    }
+    renderer.camera.snap(game.player.px - 160, game.player.py);
+    return { game, screen: SCREEN_PLAY };
   }
-  if (shot === 'chase') {
-    // Three stars: Rico in a sports car, two cop cars closing in.
-    const car = makeCar('sports', 1400, 1400, 0, '#e74c3c');
-    car.speed = 360;
-    game.cars.push(car);
-    p.inCar = car;
-    p.x = car.x;
-    p.y = car.y;
-    addHeat(game.wanted, 3);
-    game.state = 'playing';
-    return;
+
+  if (name === 'chase') {
+    // Three-star chase: police closing in on a sports car, mission 4 active.
+    game.missions.index = 3;
+    game.missions.startNext();
+    game.wanted.addCrime(3, 'chase scene');
+    placeInCar(game, 'sports', 2000, 2000, 0, 300);
+    spawnCops(game, [[1640, 2000], [2360, 2000], [2000, 2360]]);
+    for (let i = 0; i < 90; i += 1) {
+      game.police.step(step, game.player, game.wanted, game.city);
+      game.traffic.step(step, game.city, game.player.car);
+      game.player.car.drive(1, 0, step);
+    }
+    renderer.camera.snap(game.player.px - 200, game.player.py - 60);
+    return { game, screen: SCREEN_PLAY };
   }
-  if (shot === 'mission') {
-    // Mission 6, the bank job: Rico on foot at the bank, vault cash marker
-    // and GPS route to the safehouse on the HUD and minimap.
-    p.x = LANDMARKS.bank.x + 40;
-    p.y = LANDMARKS.bank.y + 90;
-    p.angle = -Math.PI / 2;
-    game.mission.index = 5;
-    game.mission.step = 1;
-    game.mission.active = true;
-    game.mission.timer = 0;
-    game.mission.count = 0;
-    game.mission.message = 'The Big Score — grab the vault cash';
-    game.mission.messageTimer = 3;
-    game.missionPackages = [{ x: LANDMARKS.bank.x + 120, y: LANDMARKS.bank.y + 60 }];
-    game.state = 'playing';
+
+  if (name === 'mission') {
+    // The bank job: on foot at the Bayfront Bank, two stars, cops closing.
+    game.missions.index = 4;
+    game.missions.startNext();
+    game.wanted.addCrime(2, 'bank alarm');
+    const bank = game.city.spawns.bank;
+    game.player.x = bank.x + 40;
+    game.player.y = bank.y + 40;
+    game.player.angle = Math.PI / 4;
+    spawnCops(game, [[bank.x + 420, bank.y - 120], [bank.x - 380, bank.y + 200]]);
+    for (let i = 0; i < 90; i += 1) {
+      game.police.step(step, game.player, game.wanted, game.city);
+      game.crowd.step(step, game.city, { x: game.player.x, y: game.player.y });
+    }
+    // The Golden Marlin parked nearby, waiting for the getaway.
+    const marlin = game.parkedCars.find((c) => c.cls === 'marlin');
+    if (marlin) {
+      marlin.x = bank.x;
+      marlin.y = bank.y + 160;
+      marlin.angle = Math.PI / 2;
+    }
+    renderer.camera.snap(game.player.px - 320, game.player.py - 200);
+    return { game, screen: SCREEN_PLAY };
   }
+
+  // 'start' and anything else: the title screen.
+  return { game, screen: SCREEN_TITLE };
 }

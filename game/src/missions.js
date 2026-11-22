@@ -1,142 +1,214 @@
-// Palmetto Bay — the story.
-//
-// Six missions from config.js, each a chain of steps the player works
-// through. This file owns the mission runtime: what the current step asks,
-// when a step completes, what a mission pays, and what failing one costs.
-// The game loop asks it every frame.
+// The story: six missions for Rook, a driver new to Palmetto Bay, working for
+// fixer Marla Vane. Each mission is a small state machine of stages: reach a
+// marker, do the thing, reach the next marker. Rewards are cash.
+export const MISSION_DEFS = [
+  {
+    id: 1,
+    title: 'Keys to the City',
+    giver: 'Marla Vane',
+    brief: 'Marla needs a driver. Steal any car (walk up and press E) and bring it to the hideout on Coral Row.',
+    reward: 250,
+    stages: [
+      { kind: 'steal', text: 'Steal a car — press E next to one' },
+      { kind: 'goto', at: 'hideout', text: 'Drive the car to the hideout' },
+    ],
+  },
+  {
+    id: 2,
+    title: 'Delivery Run',
+    giver: 'Marla Vane',
+    brief: 'A package is waiting at the docks. Pick it up on foot, then deliver it to the stadium. Keep it quiet — a wanted level slows the job down.',
+    reward: 400,
+    stages: [
+      { kind: 'goto', at: 'docks', text: 'Pick up the package at the docks' },
+      { kind: 'goto', at: 'stadium', text: 'Deliver the package to the stadium' },
+    ],
+  },
+  {
+    id: 3,
+    title: 'The Golden Marlin',
+    giver: 'Marla Vane',
+    brief: "The Golden Marlin — a one-of-one gold Falcon GT — is parked at the marina. Take it. The owner will not be pleased.",
+    reward: 600,
+    stages: [
+      { kind: 'stealMarlin', text: 'Steal the Golden Marlin at the marina' },
+      { kind: 'goto', at: 'warehouse', text: 'Drive the Marlin to the warehouse' },
+    ],
+  },
+  {
+    id: 4,
+    title: 'Heat Wave',
+    giver: 'Marla Vane',
+    brief: 'The PBPD is all over you. Lose the heat: get your wanted level to zero, then check in at the hideout.',
+    reward: 350,
+    stages: [
+      { kind: 'loseWanted', text: 'Lose the wanted level (hide, or visit Pay \'n Spray)' },
+      { kind: 'goto', at: 'hideout', text: 'Return to the hideout' },
+    ],
+  },
+  {
+    id: 5,
+    title: 'Bank Job',
+    giver: 'Marla Vane',
+    brief: 'The Bayfront Bank keeps its cash in a back room. Get in, grab the bag, and get out — the alarm will bring the whole department.',
+    reward: 900,
+    stages: [
+      { kind: 'goto', at: 'bank', text: 'Reach the Bayfront Bank' },
+      { kind: 'grab', text: 'Grab the cash (stand in the marker)' },
+      { kind: 'goto', at: 'warehouse', text: 'Escape to the warehouse' },
+    ],
+  },
+  {
+    id: 6,
+    title: 'Last Ride',
+    giver: 'Marla Vane',
+    brief: 'One last run: take the Marlin to the old airport, shake every cop on your tail, and disappear. Palmetto Bay is yours after this.',
+    reward: 1500,
+    stages: [
+      { kind: 'goto', at: 'airport', text: 'Drive to the old airport' },
+      { kind: 'loseWanted', text: 'Shake the police — wanted level to zero' },
+      { kind: 'goto', at: 'hideout', text: 'Come home to the hideout' },
+    ],
+  },
+];
 
-import { MISSIONS } from './config.js';
-import { distance } from './world.js';
-
-export function createMissionState() {
-  return {
-    index: 0,
-    step: 0,
-    active: false,
-    done: false,
-    timer: 0,
-    count: 0,
-    message: '',
-    messageTimer: 0,
-    packages: [],
-  };
-}
-
-export function currentMission(state) {
-  return MISSIONS[state.index] ?? null;
-}
-
-export function currentStep(state) {
-  const mission = currentMission(state);
-  if (!mission) return null;
-  return mission.steps[state.step] ?? null;
-}
-
-export function startMission(state, index) {
-  const mission = MISSIONS[index];
-  if (!mission) return false;
-  state.index = index;
-  state.step = 0;
-  state.active = true;
-  state.done = false;
-  state.timer = mission.failTimer ?? 0;
-  state.count = 0;
-  state.packages = [];
-  state.message = mission.title;
-  state.messageTimer = 3;
-  return true;
-}
-
-export function showMessage(state, text, seconds) {
-  state.message = text;
-  state.messageTimer = seconds ?? 2.5;
-}
-
-export function updateMissionTimer(state, dt) {
-  if (state.messageTimer > 0) state.messageTimer -= dt;
-  if (!state.active) return 'none';
-  if (state.timer > 0) {
-    state.timer -= dt;
-    if (state.timer <= 0) return 'failed';
+export class Missions {
+  constructor(city) {
+    this.city = city;
+    this.index = 0; // next mission to start
+    this.active = null; // { def, stage, timer, marker }
+    this.completed = 0;
+    this.totalEarned = 0;
+    this.message = '';
+    this.messageTimer = 0;
+    this.finishedAll = false;
   }
-  return 'none';
-}
 
-function advanceStep(state) {
-  const mission = currentMission(state);
-  state.step++;
-  state.count = 0;
-  if (state.step >= mission.steps.length) {
-    state.active = false;
-    state.done = true;
-    return 'complete';
+  get currentDef() {
+    return this.index < MISSION_DEFS.length ? MISSION_DEFS[this.index] : null;
   }
-  return 'advanced';
-}
 
-// The per-frame mission check. The game passes what happened this frame:
-// where the player is, what they drive, what they shot, what they picked
-// up. Returns 'complete', 'failed', 'advanced' or 'none'.
-export function updateMission(state, ctx) {
-  if (!state.active) return 'none';
-  const step = currentStep(state);
-  if (!step) return 'none';
-  const { player, playerCar } = ctx;
+  startNext() {
+    const def = this.currentDef;
+    if (!def) return false;
+    this.active = { def, stage: 0, timer: 0, marker: this.markerFor(def.stages[0]) };
+    this.message = `Mission ${def.id}: ${def.title} — ${def.brief}`;
+    this.messageTimer = 6;
+    return true;
+  }
 
-  if (step.type === 'goto') {
-    if (distance(player.x, player.y, step.x, step.y) < 70) {
-      showMessage(state, 'Objective reached', 2);
-      return advanceStep(state);
+  markerFor(stage) {
+    if (!stage) return null;
+    if (stage.kind === 'goto' || stage.kind === 'grab') {
+      const spot = this.city.spawns[stage.at];
+      return spot ? { x: spot.x, y: spot.y } : null;
+    }
+    if (stage.kind === 'stealMarlin') {
+      const spot = this.city.spawns.marlin;
+      return { x: spot.x, y: spot.y };
+    }
+    return null;
+  }
+
+  stageText() {
+    if (!this.active) return '';
+    return this.active.def.stages[this.active.stage].text;
+  }
+
+  advance() {
+    const m = this.active;
+    m.stage += 1;
+    if (m.stage >= m.def.stages.length) {
+      this.complete();
+      return;
+    }
+    m.marker = this.markerFor(m.def.stages[m.stage]);
+    this.message = m.def.stages[m.stage].text;
+    this.messageTimer = 4;
+  }
+
+  complete() {
+    const m = this.active;
+    this.completed += 1;
+    this.totalEarned += m.def.reward;
+    this.message = `Mission complete: ${m.def.title} — +$${m.def.reward}`;
+    this.messageTimer = 5;
+    this.active = null;
+    this.index += 1;
+    if (this.index >= MISSION_DEFS.length) this.finishedAll = true;
+  }
+
+  fail(reason) {
+    this.message = `Mission failed: ${reason}`;
+    this.messageTimer = 5;
+    this.active = null;
+  }
+
+  // Called every frame with the live game state; returns events for the game.
+  step(dt, game) {
+    if (this.messageTimer > 0) this.messageTimer -= dt;
+    if (!this.active) return;
+    const m = this.active;
+    const stage = m.def.stages[m.stage];
+    const player = game.player;
+    const px = player.px;
+    const py = player.py;
+    m.timer += dt;
+    if (stage.kind === 'goto' || stage.kind === 'grab') {
+      const spot = m.marker;
+      if (!spot) return;
+      const d = Math.hypot(px - spot.x, py - spot.y);
+      if (d < 70) {
+        if (stage.kind === 'grab') {
+          m.timer = 0;
+          if (m.timer === 0 && stage.kind === 'grab') {
+            // Stand in the marker briefly to grab the bag.
+            m.grabTime = (m.grabTime || 0) + dt;
+            if (m.grabTime > 1.5) this.advance();
+            return;
+          }
+        }
+        this.advance();
+      }
+    } else if (stage.kind === 'steal') {
+      if (player.car) this.advance();
+    } else if (stage.kind === 'stealMarlin') {
+      if (player.car && player.car.cls === 'marlin') this.advance();
+    } else if (stage.kind === 'loseWanted') {
+      if (game.wanted.stars === 0) this.advance();
     }
   }
-  if (step.type === 'deliver') {
-    if (!playerCar) return 'none';
-    if (distance(playerCar.x, playerCar.y, step.x, step.y) < 80) {
-      showMessage(state, 'Delivered', 2);
-      return advanceStep(state);
-    }
-  }
-  if (step.type === 'steal') {
-    if (playerCar && playerCar.kind === 'aurum') {
-      showMessage(state, 'Aurum GT stolen — lose the cops and deliver it', 3);
-      return advanceStep(state);
-    }
-  }
-  if (step.type === 'shoot') {
-    if (ctx.enemiesDown >= step.count) {
-      showMessage(state, 'They got the message', 2);
-      return advanceStep(state);
-    }
-  }
-  if (step.type === 'collect') {
-    if (state.count >= step.count) {
-      showMessage(state, 'Package secured', 2);
-      return advanceStep(state);
-    }
-  }
-  if (step.type === 'escape') {
-    if (ctx.wantedStars === 0) {
-      showMessage(state, 'Heat is off', 2);
-      return advanceStep(state);
-    }
-  }
-  return 'none';
-}
 
-export function missionObjectiveText(state) {
-  const mission = currentMission(state);
-  if (!mission) return 'Palmetto Bay is yours — free roam';
-  if (!state.active && !state.done) return `Next: ${mission.title} — head to the marker`;
-  if (state.done) return `${mission.title} complete — $${mission.reward} earned`;
-  const step = currentStep(state);
-  if (!step) return mission.title;
-  if (step.type === 'shoot') return `${step.label} (${Math.max(0, step.count - (state.count || 0))} left)`;
-  if (step.type === 'collect') return `${step.label} (${state.count}/${step.count})`;
-  return step.label;
-}
+  // Mission 4 and 6 need heat: raise the wanted level when they start.
+  heatFor(missionId) {
+    if (missionId === 4) return 3;
+    if (missionId === 6) return 2;
+    return 0;
+  }
 
-export function missionMarker(state) {
-  const step = currentStep(state);
-  if (!step || step.x === undefined) return null;
-  return { x: step.x, y: step.y, label: step.label };
+  toSave() {
+    return {
+      index: this.index,
+      completed: this.completed,
+      totalEarned: this.totalEarned,
+      finishedAll: this.finishedAll,
+      active: this.active
+        ? { id: this.active.def.id, stage: this.active.stage }
+        : null,
+    };
+  }
+
+  fromSave(data) {
+    if (!data) return;
+    this.index = data.index || 0;
+    this.completed = data.completed || 0;
+    this.totalEarned = data.totalEarned || 0;
+    this.finishedAll = !!data.finishedAll;
+    if (data.active) {
+      const def = MISSION_DEFS.find((d) => d.id === data.active.id);
+      if (def) {
+        this.active = { def, stage: data.active.stage || 0, timer: 0, marker: this.markerFor(def.stages[data.active.stage || 0]) };
+      }
+    }
+  }
 }

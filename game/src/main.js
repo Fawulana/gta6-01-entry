@@ -1,484 +1,307 @@
-// Palmetto Bay — the game loop and state machine.
-//
-// This file creates the game, runs it, and owns the moments where systems
-// meet: entering a car, stealing, getting busted, finishing a mission.
-// Each system lives in its own file; this one only conducts them.
+// Palmetto Bay — bootstrap and screen state machine.
+// Title -> play -> pause / game over / win. The world itself lives in game.js.
+import { createGame, stepGame, newGameFromSave } from './game.js';
+import { Input } from './input.js';
+import { Renderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSE, SCREEN_OVER, SCREEN_WIN } from './render.js';
+import { hasSave, saveGame } from './save.js';
+import { VIEW } from './config.js';
+import { stageShot } from './shots.js';
 
-import { LANDMARKS, MISSIONS, WANTED } from './config.js';
-import { createAudio, playBusted, playCrash, playMissionComplete, playPickup, playShot, resumeAudio, setMuted, updateEngineSound, updateMusic, updateSiren } from './audio.js';
-import { createCombat, explodeCar, fireBullet, spawnEnemies, updateCombat } from './combat.js';
-import { createInput } from './input.js';
-import { drawBustedScreen, drawHud, drawMissionCompleteScreen, drawPauseScreen, drawTitleScreen, drawWastedScreen } from './hud.js';
-import { createMissionState, currentMission, currentStep, missionMarker, missionObjectiveText, showMessage, startMission, updateMission, updateMissionTimer } from './missions.js';
-import { chestAt, chestsTaken, createChests, createPickups, dropPickup, pickupAt, updatePickups } from './pickups.js';
-import { removePed, pedHitByCar, spawnPed, updatePeds } from './peds.js';
-import { addCash, createPlayer, damagePlayer, healPlayer, spendCash, updatePlayerOnFoot } from './player.js';
-import { addHeat, clearWanted, createWanted, spawnCopCar, spawnFootCop, updateBust, updateCopCar, updateFootCop, updateWanted, wantedCopCount } from './police.js';
-import { createRenderer, renderWorld } from './render.js';
-import { loadGame, saveGame } from './save.js';
-import { parseShotParams, stageShot } from './shots.js';
-import { ammoShopLabel, shopAt, sprayShopLabel, useAmmoShop, useSprayShop } from './shops.js';
-import { carOverlaps, makeCar, nearestCar, spawnTrafficCar, updateDrivenCar, updateTrafficCar } from './vehicles.js';
-import { distance, generateWorld } from './world.js';
-import { START_SEED } from './config.js';
+const canvas = document.getElementById('game');
+const statusEl = document.getElementById('status');
+const params = new URLSearchParams(location.search);
+const shotName = params.get('shot');
+const autotest = params.get('autotest');
 
-const SAVE_INTERVAL = 10;
-const TRAFFIC_TARGET = 14;
-const PED_TARGET = 22;
+const input = new Input(canvas);
+const renderer = new Renderer(canvas);
+renderer.resize(VIEW.width, VIEW.height);
 
-function createGame(seed) {
-  const saved = loadGame();
-  const world = generateWorld(seed);
-  const player = createPlayer(LANDMARKS.safehouse.x, LANDMARKS.safehouse.y + 40);
-  if (saved) player.cash = saved.cash;
-  const game = {
-    seed,
-    world,
-    landmarks: LANDMARKS,
-    player,
-    cars: [],
-    peds: [],
-    cops: [],
-    footCops: [],
-    wanted: createWanted(),
-    combat: createCombat(),
-    mission: createMissionState(),
-    chests: createChests(),
-    pickups: createPickups(),
-    missionPackages: [],
-    missionsDone: saved ? saved.missionsDone : [],
-    bestCash: saved ? saved.bestCash : 0,
-    totalEarned: saved ? saved.totalEarned : 0,
-    state: 'title',
-    completedMission: null,
-    objectiveText: '',
-    prompt: '',
-    missionMarker: null,
-    saveTimer: SAVE_INTERVAL,
-    time: 0,
-    cam: null,
-    killBase: 0,
-    lastDrops: 0,
-    chestsTakenCount: 0,
+let game = createGame();
+game.rendererCamera = renderer.camera;
+game.hasSaveFlag = hasSave();
+
+let screen = SCREEN_TITLE;
+let lastTime = performance.now();
+let pausedFrom = null;
+let auto = null;
+
+function setStatus(text) {
+  if (statusEl) statusEl.textContent = text;
+}
+
+function startFresh() {
+  game = createGame();
+  game.rendererCamera = renderer.camera;
+  game.hasSaveFlag = hasSave();
+  renderer.camera.snap(game.player.px, game.player.py);
+  screen = SCREEN_PLAY;
+  game.sound.ensure();
+  setStatus('Palmetto Bay: free roam. Press M to start the next mission.');
+}
+
+function startFromSave() {
+  game = newGameFromSave();
+  game.rendererCamera = renderer.camera;
+  game.hasSaveFlag = hasSave();
+  renderer.camera.snap(game.player.px, game.player.py);
+  screen = SCREEN_PLAY;
+  game.sound.ensure();
+  setStatus('Palmetto Bay: save loaded.');
+}
+
+function startAutotest() {
+  startFresh();
+  auto = {
+    mode: autotest,
+    startedAt: performance.now(),
+    simTime: 0,
+    done: false,
   };
-  if (saved) {
-    for (const id of saved.chestsTaken) {
-      const chest = game.chests.find((c) => c.id === id);
-      if (chest) chest.taken = true;
+  // Mission 1: steal a car, drive to the hideout.
+  game.missions.startNext();
+  game.sound.muted = true;
+}
+
+// Autopilot for the ?autotest= harness: steer the car (or the player on
+// foot) toward the current mission marker, following the road grid so it
+// never tries to drive through a building. It drives through the same input
+// the player uses, so a passing autotest means the mission is really
+// playable.
+function snapRoad(v) {
+  return Math.round(v / 400) * 400;
+}
+
+function onRoadLine(v) {
+  const r = ((v % 400) + 400) % 400;
+  return Math.min(r, 400 - r) < 34;
+}
+
+// One waypoint on the road grid toward (tx, ty): along the player's current
+// road to the target's row or column, then straight to the target.
+function roadWaypoint(px, py, tx, ty) {
+  const onV = onRoadLine(px);
+  const onH = onRoadLine(py);
+  if (onV && Math.abs(py - snapRoad(ty)) > 20) return { x: snapRoad(px), y: snapRoad(ty) };
+  if (onH && Math.abs(px - snapRoad(tx)) > 20) return { x: snapRoad(tx), y: snapRoad(py) };
+  if (!onV && !onH) {
+    const rx = ((px % 400) + 400) % 400;
+    const ry = ((py % 400) + 400) % 400;
+    if (Math.min(rx, 400 - rx) < Math.min(ry, 400 - ry)) return { x: snapRoad(px), y: py };
+    return { x: px, y: snapRoad(py) };
+  }
+  return { x: tx, y: ty };
+}
+
+function autopilot(game, dt, input) {
+  // Fresh keys every frame: stale injected keys would keep steering forever.
+  for (const code of ['KeyW', 'KeyA', 'KeyS', 'KeyD']) input.inject(code, false);
+  const m = game.missions.active;
+  const player = game.player;
+  const target = m && m.marker ? m.marker : { x: 400, y: 620 };
+  const px = player.px;
+  const py = player.py;
+  if (!player.car) {
+    // Walk to the nearest stealable car first.
+    let car = null;
+    let best = 1e9;
+    for (const c of game.parkedCars) {
+      if (c.dead) continue;
+      const d = Math.hypot(c.x - px, c.y - py);
+      if (d < best) {
+        best = d;
+        car = c;
+      }
     }
-  }
-  // Parked cars around the city, including the gold Aurum GT at the marina.
-  const parked = [
-    { kind: 'sedan', x: 620, y: 640 },
-    { kind: 'coupe', x: 1420, y: 240 },
-    { kind: 'suv', x: 2220, y: 1040 },
-    { kind: 'truck', x: 1040, y: 1840 },
-    { kind: 'sports', x: 2620, y: 640 },
-    { kind: 'sedan', x: 1820, y: 2240 },
-    { kind: 'aurum', x: LANDMARKS.marina.x, y: LANDMARKS.marina.y - 60 },
-  ];
-  for (const p of parked) {
-    const car = makeCar(p.kind, p.x, p.y, 0, p.kind === 'aurum' ? '#ffd700' : undefined);
-    car.traffic = false;
-    game.cars.push(car);
-  }
-  return game;
-}
-
-function spawnMissionPackages(game) {
-  const spots = [
-    { x: 420, y: 420 },
-    { x: 3180, y: 420 },
-    { x: 1620, y: 2200 },
-  ];
-  game.missionPackages = spots.map((s) => ({ x: s.x, y: s.y }));
-}
-
-function beginMission(game, index) {
-  const mission = MISSIONS[index];
-  if (!mission) return;
-  startMission(game.mission, index);
-  game.killBase = game.combat.enemiesDown;
-  if (mission.id === 3) spawnEnemies(game.combat, LANDMARKS.docks.x, LANDMARKS.docks.y, 4, Math.random);
-  if (mission.id === 4) spawnMissionPackages(game);
-  if (mission.id === 5) addHeat(game.wanted, 3);
-  if (mission.id === 6) game.missionPackages = [{ x: LANDMARKS.bank.x + 120, y: LANDMARKS.bank.y + 60 }];
-  game.missionMarker = missionMarker(game.mission);
-}
-
-function finishMission(game) {
-  const mission = currentMission(game.mission);
-  addCash(game.player, mission.reward);
-  game.totalEarned += mission.reward;
-  game.bestCash = Math.max(game.bestCash, game.player.cash);
-  if (!game.missionsDone.includes(mission.id)) game.missionsDone.push(mission.id);
-  game.completedMission = mission;
-  game.state = 'missionComplete';
-  playMissionComplete(game.audio);
-  saveGame(game);
-}
-
-function respawnAtSafehouse(game) {
-  game.player.x = LANDMARKS.safehouse.x;
-  game.player.y = LANDMARKS.safehouse.y + 40;
-  game.player.health = 100;
-  if (game.player.inCar) {
-    game.player.inCar.speed = 0;
-    game.player.inCar = null;
-  }
-  game.cops = [];
-  game.footCops = [];
-  game.combat.enemies = [];
-  clearWanted(game.wanted);
-}
-
-function updatePlaying(game, input, edges, dt) {
-  const p = game.player;
-  const world = game.world;
-  // Pause and mute.
-  if (edges.pause) {
-    game.state = 'paused';
+    if (car && best < 56) {
+      input.inject('KeyE', true);
+      return;
+    }
+    const wp = roadWaypoint(px, py, car ? car.x : target.x, car ? car.y : target.y);
+    const want = Math.atan2(wp.y - py, wp.x - px);
+    let diff = want - player.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    input.inject('KeyW', true);
+    if (diff > 0.3) input.inject('KeyD', true);
+    else if (diff < -0.3) input.inject('KeyA', true);
     return;
   }
-  if (edges.mute) setMuted(game.audio, !game.audio.muted);
-
-  // Mission timer and messages.
-  const timerResult = updateMissionTimer(game.mission, dt);
-  if (timerResult === 'failed') {
-    showMessage(game.mission, 'Mission failed — try again', 3);
-    beginMission(game, game.mission.index);
+  const car = player.car;
+  const wp = roadWaypoint(px, py, target.x, target.y);
+  const dx = wp.x - px;
+  const dy = wp.y - py;
+  const targetDist = Math.hypot(target.x - px, target.y - py);
+  const want = Math.atan2(dy, dx);
+  let diff = want - car.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  const reversing = Math.abs(diff) > Math.PI * 0.7;
+  if (targetDist > 90) {
+    input.inject('KeyW', !reversing);
+    input.inject('KeyS', reversing);
   }
+  if (diff > 0.15) input.inject('KeyD', true);
+  else if (diff < -0.15) input.inject('KeyA', true);
+  if (targetDist < 130 && Math.abs(car.speed) > 150) input.inject('KeyS', true);
+}
 
-  // Interact: enter/exit a car, chest, shop, package.
-  if (edges.interact) {
-    if (p.inCar) {
-      const car = p.inCar;
-      p.inCar = null;
-      p.x = car.x - Math.sin(car.angle) * 30;
-      p.y = car.y + Math.cos(car.angle) * 30;
-      p.angle = car.angle;
+// Synchronous autotest: run the game forward in fixed steps without waiting
+// on requestAnimationFrame, so a headless run finishes in seconds. The
+// result lands in document.title and window.__testResult.
+function runAutotestSync() {
+  const step = 1 / 60;
+  const maxSteps = 60 * 150;
+  for (let i = 0; i < maxSteps && !auto.done; i += 1) {
+    auto.simTime += step;
+    autopilot(game, step, input);
+    stepGame(game, step, input, canvas);
+    renderer.camera.follow(game.player.px, game.player.py, step);
+    input.endFrame();
+    if (game.missions.completed >= 1) {
+      auto.done = true;
+      window.__testResult = {
+        ok: true,
+        mission: 'mission1-complete',
+        cash: game.player.cash,
+        simSeconds: Math.round(auto.simTime * 10) / 10,
+        wanted: game.wanted.stars,
+      };
+      document.title = 'AUTOTEST PASS';
+    } else if (auto.simTime > 120) {
+      auto.done = true;
+      window.__testResult = {
+        ok: false,
+        mission: 'mission1-timeout',
+        stage: game.missions.active ? game.missions.active.stage : -1,
+        playerInCar: !!game.player.car,
+        pos: [Math.round(game.player.px), Math.round(game.player.py)],
+        simSeconds: Math.round(auto.simTime),
+      };
+      document.title = 'AUTOTEST FAIL';
+    }
+  }
+  setStatus(`autotest ${auto.mode} ${auto.done ? (window.__testResult.ok ? 'PASS' : 'FAIL') : 'incomplete'} sim=${auto.simTime.toFixed(1)} completed=${game.missions.completed}`);
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+  lastTime = now;
+  const time = now / 1000;
+
+  if (screen === SCREEN_TITLE) {
+    if (input.hit('Enter', 'NumpadEnter') || input.mouseClicked) {
+      game.sound.ensure();
+      startFresh();
+    } else if (input.hit('KeyL') && hasSave()) {
+      startFromSave();
+    }
+    renderer.draw(game, SCREEN_TITLE, time);
+  } else if (screen === SCREEN_PLAY) {
+    if (auto) {
+      auto.simTime += dt;
+      autopilot(game, dt, input);
+      if (!auto.done) {
+        setStatus(`autotest ${auto.mode} sim=${auto.simTime.toFixed(1)} stage=${game.missions.active ? game.missions.active.stage : 'none'} completed=${game.missions.completed} inCar=${!!game.player.car} pos=${Math.round(game.player.px)},${Math.round(game.player.py)}`);
+      }
+      if (game.missions.completed >= 1) {
+        auto.done = true;
+        window.__testResult = {
+          ok: true,
+          mission: 'mission1-complete',
+          cash: game.player.cash,
+          simSeconds: Math.round(auto.simTime * 10) / 10,
+          wanted: game.wanted.stars,
+        };
+        document.title = 'AUTOTEST PASS';
+      } else if (auto.simTime > 120) {
+        auto.done = true;
+        window.__testResult = {
+          ok: false,
+          mission: 'mission1-timeout',
+          stage: game.missions.active ? game.missions.active.stage : -1,
+          playerInCar: !!game.player.car,
+          simSeconds: Math.round(auto.simTime),
+        };
+        document.title = 'AUTOTEST FAIL';
+      }
+    }
+    if (!game.shops.open) {
+      if (input.hit('KeyP', 'Escape')) {
+        screen = SCREEN_PAUSE;
+        pausedFrom = SCREEN_PLAY;
+      }
+    }
+    if (screen === SCREEN_PLAY) {
+      stepGame(game, dt, input, canvas);
+      renderer.camera.follow(game.player.px, game.player.py, dt);
+      if (game.player.dead) {
+        screen = SCREEN_OVER;
+        game.sound.fail();
+      } else if (game.missions.finishedAll && !game.winShownHandled) {
+        game.winShownHandled = true;
+        screen = SCREEN_WIN;
+        game.sound.missionDone();
+      }
+      renderer.draw(game, SCREEN_PLAY, time);
     } else {
-      const chest = chestAt(game.chests, p.x, p.y);
-      if (chest) {
-        chest.taken = true;
-        addCash(p, chest.cash);
-        game.bestCash = Math.max(game.bestCash, p.cash);
-        playPickup(game.audio);
-        showMessage(game.mission, `Stash chest: +$${chest.cash}`, 2);
-        saveGame(game);
-      } else {
-        const shop = shopAt(p);
-        if (shop === 'spray') {
-          const result = useSprayShop(p, null, game.wanted);
-          showMessage(game.mission, result === 'ok' ? "Pay 'n Spray — clean and clear" : 'Not enough cash', 2);
-        } else if (shop === 'ammo') {
-          const result = useAmmoShop(p, p.hasPistol ? 'ammo' : 'pistol');
-          showMessage(game.mission, result === 'ok' ? 'Ammu-Nation — pleasure doing business' : result === 'owned' ? 'Already armed' : 'Not enough cash', 2);
-        } else {
-          const car = nearestCar(game.cars, p.x, p.y, 70);
-          if (car) {
-            const wasTraffic = car.traffic;
-            car.traffic = false;
-            p.inCar = car;
-            p.x = car.x;
-            p.y = car.y;
-            if (wasTraffic) addHeat(game.wanted, WANTED.stealHeat);
-          }
-        }
+      renderer.draw(game, SCREEN_PAUSE, time);
+    }
+  } else if (screen === SCREEN_PAUSE) {
+    if (input.hit('KeyP', 'Escape', 'Enter')) screen = SCREEN_PLAY;
+    if (input.hit('KeyH')) {
+      if (saveGame(game)) {
+        game.savedFlash = 'Game saved';
+        game.savedFlashTimer = 2;
       }
     }
-  }
-
-  // Move Rico, on foot or driving.
-  if (p.inCar) {
-    updateDrivenCar(p.inCar, input, world, dt);
-    p.x = p.inCar.x;
-    p.y = p.inCar.y;
-    p.angle = p.inCar.angle;
-    if (p.inCar.hp <= 0) {
-      explodeCar(game.combat, p.inCar);
-      game.cars.splice(game.cars.indexOf(p.inCar), 1);
-      p.inCar = null;
-      damagePlayer(p, 20);
-      playCrash(game.audio);
+    if (input.hit('KeyR') && hasSave()) startFromSave();
+    if (input.hit('KeyQ')) screen = SCREEN_TITLE;
+    renderer.draw(game, SCREEN_PAUSE, time);
+  } else if (screen === SCREEN_OVER) {
+    if (input.hit('KeyR') && hasSave()) startFromSave();
+    else if (input.hit('Enter')) startFresh();
+    renderer.draw(game, SCREEN_OVER, time);
+  } else if (screen === SCREEN_WIN) {
+    if (input.hit('Enter')) {
+      screen = SCREEN_PLAY;
+      game.winShownHandled = true;
     }
-  } else {
-    updatePlayerOnFoot(p, input, world, dt);
+    renderer.draw(game, SCREEN_WIN, time);
   }
 
-  // Shooting: mouse aim, click to fire.
-  if (!p.inCar && p.hasPistol && input.mouseDown && game.cam) {
-    const aimX = input.mouseX + game.cam.x;
-    const aimY = input.mouseY + game.cam.y;
-    const aim = Math.atan2(aimY - p.y, aimX - p.x);
-    p.angle = aim;
-    if (fireBullet(game.combat, p, aim, world)) playShot(game.audio);
+  if (game.savedFlashTimer > 0) {
+    const ctx = renderer.ctx;
+    ctx.fillStyle = '#7dff8a';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(game.savedFlash, VIEW.width / 2, 110);
+    ctx.textAlign = 'left';
   }
 
-  // Traffic: keep the streets full, cull the far away.
-  const rng = Math.random;
-  if (game.cars.filter((c) => c.traffic).length < TRAFFIC_TARGET) {
-    const car = spawnTrafficCar(rng, world, p);
-    if (car) game.cars.push(car);
-  }
-  for (let i = game.cars.length - 1; i >= 0; i--) {
-    const car = game.cars[i];
-    if (car.traffic) {
-      updateTrafficCar(car, world, game.cars, rng, dt);
-      if (distance(car.x, car.y, p.x, p.y) > 1400) game.cars.splice(i, 1);
-    }
-  }
-  // Car-to-car bumps.
-  for (let i = 0; i < game.cars.length; i++) {
-    for (let j = i + 1; j < game.cars.length; j++) {
-      const a = game.cars[i];
-      const b = game.cars[j];
-      const d = distance(a.x, a.y, b.x, b.y);
-      if (d < 44 && d > 0.01) {
-        const push = (44 - d) / 2;
-        const nx = (b.x - a.x) / d;
-        const ny = (b.y - a.y) / d;
-        a.x -= nx * push;
-        a.y -= ny * push;
-        b.x += nx * push;
-        b.y += ny * push;
-        a.speed *= 0.7;
-        b.speed *= 0.7;
-        if (Math.abs(a.speed) > 150 || Math.abs(b.speed) > 150) playCrash(game.audio);
-      }
-    }
-  }
-  // Pedestrians: keep the sidewalks alive, cull the far away.
-  if (game.peds.length < PED_TARGET) {
-    const ped = spawnPed(rng, world, p);
-    if (ped) game.peds.push(ped);
-  }
-  const danger = game.combat.bullets.length > 0
-    ? { x: game.combat.bullets[0].x, y: game.combat.bullets[0].y }
-    : (p.inCar && Math.abs(p.inCar.speed) > 200 ? { x: p.x, y: p.y } : null);
-  updatePeds(game.peds, world, danger, dt);
-  for (let i = game.peds.length - 1; i >= 0; i--) {
-    if (distance(game.peds[i].x, game.peds[i].y, p.x, p.y) > 1300) game.peds.splice(i, 1);
-  }
-  // Running a pedestrian over is a crime.
-  if (p.inCar) {
-    const hit = pedHitByCar(game.peds, p.inCar);
-    if (hit) {
-      removePed(game.peds, hit);
-      addHeat(game.wanted, WANTED.hitPedHeat);
-      playCrash(game.audio);
-      showMessage(game.mission, 'Pedestrian down — the heat is on', 2);
-    }
-  }
-
-  // Wanted: decay, then field the cops the heat calls for.
-  updateWanted(game.wanted, dt);
-  const want = wantedCopCount(game.wanted);
-  while (game.cops.length < want) game.cops.push(spawnCopCar(game.wanted, p, rng));
-  while (game.cops.length > want) game.cops.pop();
-  let touchingCop = false;
-  for (let i = game.cops.length - 1; i >= 0; i--) {
-    const cop = game.cops[i];
-    if (updateCopCar(cop, p, p.inCar, world, dt)) touchingCop = true;
-    if (cop.hp <= 0) {
-      explodeCar(game.combat, cop);
-      game.cops.splice(i, 1);
-    }
-    // Ramming a cop car damages it.
-    if (p.inCar && carOverlaps(p.inCar, cop.x, cop.y, 10)) {
-      cop.hp -= 1;
-      p.inCar.hp -= 1;
-    }
-  }
-  // Foot cops when Rico is on foot and wanted.
-  if (!p.inCar && game.wanted.stars >= 1 && game.footCops.length < 2) {
-    game.footCops.push(spawnFootCop(game.wanted, p, rng));
-  }
-  if (game.wanted.stars === 0) game.footCops = [];
-  for (const cop of game.footCops) {
-    if (updateFootCop(cop, p, dt)) touchingCop = true;
-  }
-  if (updateBust(game.wanted, touchingCop && (!p.inCar || Math.abs(p.inCar.speed) < 40), dt)) {
-    spendCash(p, 200);
-    respawnAtSafehouse(game);
-    game.state = 'busted';
-    playBusted(game.audio);
-    return;
-  }
-
-  // Combat: bullets, enemies, explosions.
-  updateCombat(game.combat, p, p.inCar, world, dt, (dmg) => {
-    if (p.inCar) {
-      p.inCar.hp -= dmg;
-    } else if (damagePlayer(p, dmg)) {
-      spendCash(p, 100);
-      respawnAtSafehouse(game);
-      game.state = 'wasted';
-    }
-  });
-  // Mission kill tracking.
-  const step = currentStep(game.mission);
-  if (step && step.type === 'shoot') {
-    game.mission.count = game.combat.enemiesDown - game.killBase;
-  }
-
-  // Mission packages: walk over one to collect it.
-  for (let i = game.missionPackages.length - 1; i >= 0; i--) {
-    const pkg = game.missionPackages[i];
-    if (distance(p.x, p.y, pkg.x, pkg.y) < 50) {
-      game.missionPackages.splice(i, 1);
-      game.mission.count++;
-      playPickup(game.audio);
-      showMessage(game.mission, 'Package secured', 2);
-    }
-  }
-
-  // Pickups: walk over one to use it.
-  const got = pickupAt(game.pickups, p.x, p.y);
-  if (got) {
-    if (got.kind === 'health') healPlayer(p, 30);
-    else p.ammo += 12;
-    playPickup(game.audio);
-  }
-  updatePickups(game.pickups, dt);
-  // Enemies drop pickups when they fall.
-  if (game.combat.enemiesDown > (game.lastDrops ?? 0)) {
-    game.lastDrops = game.combat.enemiesDown;
-    dropPickup(game.pickups, Math.random() < 0.5 ? 'health' : 'ammo', p.x + (Math.random() - 0.5) * 120, p.y + (Math.random() - 0.5) * 120);
-  }
-
-  // The mission itself: advance steps, pay out, fail the timer.
-  const missionResult = updateMission(game.mission, {
-    player: p,
-    playerCar: p.inCar,
-    enemiesDown: game.combat.enemiesDown - game.killBase,
-    wantedStars: game.wanted.stars,
-  });
-  if (missionResult === 'complete') {
-    finishMission(game);
-    return;
-  }
-  game.missionMarker = missionMarker(game.mission);
-  game.objectiveText = missionObjectiveText(game.mission);
-
-  // Context prompt for E.
-  game.prompt = '';
-  if (!p.inCar) {
-    if (chestAt(game.chests, p.x, p.y)) game.prompt = 'Stash chest [E]';
-    else if (shopAt(p) === 'spray') game.prompt = sprayShopLabel();
-    else if (shopAt(p) === 'ammo') game.prompt = ammoShopLabel(p);
-    else if (nearestCar(game.cars, p.x, p.y, 70)) game.prompt = 'Enter car [E]';
-    else if (game.missionPackages.some((pkg) => distance(p.x, p.y, pkg.x, pkg.y) < 50)) game.prompt = 'Grab package [E]';
-  } else {
-    game.prompt = 'Exit car [E]';
-  }
-
-  // Sound follows the action.
-  updateEngineSound(game.audio, p.inCar ? p.inCar.speed : 0, p.inCar ? p.inCar.topSpeed : 1, !!p.inCar);
-  updateSiren(game.audio, game.wanted.stars, dt);
-  updateMusic(game.audio, dt);
-
-  // Autosave.
-  game.chestsTakenCount = chestsTaken(game.chests);
-  game.saveTimer -= dt;
-  if (game.saveTimer <= 0) {
-    game.saveTimer = SAVE_INTERVAL;
-    saveGame(game);
-  }
+  input.endFrame();
+  if (!shotName) requestAnimationFrame(frame);
 }
 
 function boot() {
-  const canvas = document.getElementById('game');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  const renderer = createRenderer(canvas);
-  const input = createInput(canvas);
-  const shot = parseShotParams(window.location.search);
-  const seed = shot ? shot.seed : START_SEED;
-  const game = createGame(seed);
-  game.audio = createAudio();
-  game.renderer = renderer;
-  game.input = input;
-  // Read-only handle for play-testing and debugging (never used by the game).
-  window.__palmetto = game;
-
-  if (shot) {
-    stageShot(game, shot.shot);
-    if (shot.shot === 'mission') {
-      game.killBase = game.combat.enemiesDown;
-      game.missionMarker = missionMarker(game.mission);
-    }
-  } else {
-    beginMission(game, 0);
+  if (shotName) {
+    // Deterministic screenshot mode: stage one scene, draw one frame, stop.
+    const staged = stageShot(shotName, renderer);
+    game = staged.game;
+    renderer.draw(game, staged.screen, 12.5);
+    window.__shotReady = true;
+    document.title = `shot:${shotName}`;
+    return;
   }
-  game.objectiveText = missionObjectiveText(game.mission);
-
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  });
-
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
-    last = now;
-    game.time += dt;
-    const edges = input.consumeEdges();
-    const ctx = renderer.ctx;
-
-    if (game.state === 'title') {
-      game.cam = renderWorld(renderer, game, game.time);
-      drawTitleScreen(ctx, canvas, game);
-      if (edges.confirm || edges.click) {
-        game.state = 'playing';
-        resumeAudio(game.audio);
-      }
-    } else if (game.state === 'paused') {
-      game.cam = renderWorld(renderer, game, game.time);
-      drawHud(ctx, canvas, game);
-      drawPauseScreen(ctx, canvas, game);
-      if (edges.pause || edges.confirm || edges.click) game.state = 'playing';
-    } else if (game.state === 'busted') {
-      game.cam = renderWorld(renderer, game, game.time);
-      drawBustedScreen(ctx, canvas, game);
-      if (edges.confirm || edges.click) game.state = 'playing';
-    } else if (game.state === 'wasted') {
-      game.cam = renderWorld(renderer, game, game.time);
-      drawWastedScreen(ctx, canvas, game);
-      if (edges.confirm || edges.click) game.state = 'playing';
-    } else if (game.state === 'missionComplete') {
-      game.cam = renderWorld(renderer, game, game.time);
-      drawHud(ctx, canvas, game);
-      drawMissionCompleteScreen(ctx, canvas, game);
-      if (edges.confirm || edges.click) {
-        const next = game.mission.index + 1;
-        if (next < MISSIONS.length) {
-          beginMission(game, next);
-          game.state = 'playing';
-        } else {
-          game.state = 'playing';
-        }
-      }
-    } else {
-      updatePlaying(game, input, edges, dt);
-      if (game.state === 'playing') {
-        game.cam = renderWorld(renderer, game, game.time);
-        drawHud(ctx, canvas, game);
-      } else {
-        // updatePlaying moved us to another state mid-frame.
-        game.cam = renderWorld(renderer, game, game.time);
-        if (game.state === 'busted') drawBustedScreen(ctx, canvas, game);
-        else if (game.state === 'wasted') drawWastedScreen(ctx, canvas, game);
-        else if (game.state === 'missionComplete') drawMissionCompleteScreen(ctx, canvas, game);
-        else if (game.state === 'paused') {
-          drawHud(ctx, canvas, game);
-          drawPauseScreen(ctx, canvas, game);
-        }
-      }
-    }
-    requestAnimationFrame(frame);
+  if (autotest) {
+    startAutotest();
+    runAutotestSync();
   }
   requestAnimationFrame(frame);
 }
+
+window.addEventListener('error', (event) => {
+  window.__lastError = String(event.message || event.error);
+});
 
 boot();
