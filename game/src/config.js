@@ -1,104 +1,155 @@
-// Palmetto Bay — every tuning number and colour in one place.
-// The world is 4600 x 3400 units; the camera zooms it to the window, so no rule
-// below depends on the screen size. All money is in dollars.
+// Palmetto Bay — tuning constants, palettes, car classes, shops and story data.
+// One job: every number the rest of the game reads lives here, so balancing
+// the game means editing this file and nowhere else.
 
-export const STEP = 1 / 60;
+export const WORLD_W = 3600;
+export const WORLD_H = 2600;
+export const ROAD_W = 64;
+export const ROAD_GAP = 400;
+export const BEACH_Y = 2320;
+export const WATER_Y = 2480;
 
-export const WORLD = { width: 4600, height: 3400, beachX: 3840, waterX: 4040 };
-
-/** Road centrelines: avenues run north-south, streets east-west, plus Ocean Drive. */
-export const ROADS = {
-  avenues: [420, 920, 1420, 1920, 2420, 2920, 3420],
-  streets: [420, 820, 1220, 1620, 2020, 2420, 2820],
-  oceanDrive: 3700,
-  halfWidth: 64,
-  lane: 30,
+// Dusk palette: a sun-soaked coastal city at golden hour.
+export const PALETTE = {
+  skyTop: '#2b1d4e',
+  skyMid: '#e2603f',
+  skyLow: '#f7b267',
+  grass: '#5d8a4a',
+  sidewalk: '#b8a88f',
+  road: '#33333d',
+  roadLine: '#e8d44d',
+  sand: '#e8cf9a',
+  water: '#1f7a8c',
+  waterDeep: '#155e75',
+  buildingRoof: '#8a5a44',
+  buildingWall: '#c98f6b',
+  towerGlass: '#7fb3d5',
+  park: '#4a7c3f',
+  player: '#ffd23f',
+  police: '#2f6fd0',
+  policeLight: '#ff3b30',
+  enemy: '#c0392b',
+  marker: '#ffe14d',
+  hudBg: 'rgba(12, 10, 24, 0.72)',
+  hudText: '#ffffff',
+  hudGold: '#ffd23f',
 };
 
-export const DISTRICTS = [
-  { name: 'Downtown', x: 1200, y: 700, w: 1500, h: 1100 },
-  { name: 'Ocean Strip', x: 3500, y: 300, w: 700, h: 2800 },
-  { name: 'Marina', x: 3300, y: 200, w: 700, h: 500 },
-  { name: 'Barrio', x: 200, y: 700, w: 1000, h: 1600 },
-  { name: 'Parkside', x: 2200, y: 1100, w: 800, h: 600 },
-  { name: 'Industrial', x: 1200, y: 2500, w: 2200, h: 800 },
-  { name: 'Old Town', x: 200, y: 2300, w: 1000, h: 900 },
+// The roads: vertical and horizontal lines of the grid, in world units.
+export const ROADS_X = [200, 600, 1000, 1400, 1800, 2200, 2600, 3000, 3400];
+export const ROADS_Y = [200, 600, 1000, 1400, 1800, 2200];
+
+// Five stealable car classes plus the gold Aurum GT. Speed is world units
+// per second at full throttle; grip 0..1 (higher turns tighter); hp is how
+// much punishment the car takes before it smokes and dies.
+export const CAR_CLASSES = {
+  sedan: { name: 'Palmetto Sedan', topSpeed: 340, accel: 210, grip: 0.62, hp: 100, w: 46, h: 22, colors: ['#c0392b', '#7f8c8d', '#2e86c1', '#e67e22'] },
+  coupe: { name: 'Bayside Coupe', topSpeed: 380, accel: 240, grip: 0.7, hp: 80, w: 44, h: 20, colors: ['#8e44ad', '#16a085', '#d35400', '#f1c40f'] },
+  suv: { name: 'Dune SUV', topSpeed: 320, accel: 190, grip: 0.58, hp: 140, w: 50, h: 24, colors: ['#1a5276', '#5d6d7e', '#6c3483', '#935116'] },
+  truck: { name: 'Hauler Truck', topSpeed: 280, accel: 150, grip: 0.5, hp: 200, w: 56, h: 26, colors: ['#7b241c', '#1e8449', '#2c3e50', '#b7950b'] },
+  sports: { name: 'Comet Sports', topSpeed: 460, accel: 300, grip: 0.78, hp: 70, w: 44, h: 20, colors: ['#e74c3c', '#f39c12', '#00bcd4', '#ecf0f1'] },
+  aurum: { name: 'Aurum GT', topSpeed: 500, accel: 330, grip: 0.82, hp: 120, w: 46, h: 21, colors: ['#ffd700'] },
+};
+
+// On-foot and driving feel.
+export const PLAYER = {
+  walkSpeed: 170,
+  sprintSpeed: 260,
+  radius: 13,
+  maxHealth: 100,
+  startCash: 150,
+};
+
+// Wanted: how fast heat rises and falls, and how many cops each star fields.
+export const WANTED = {
+  stealHeat: 1,
+  shootHeat: 1,
+  hitPedHeat: 1,
+  decayPerSec: 0.05,
+  starsForCops: [0, 1, 2, 3, 4, 5],
+  copCarSpeed: 420,
+  bustRadius: 26,
+};
+
+// Weapons and shops.
+export const WEAPONS = {
+  pistol: { name: 'Pistol', damage: 34, fireRate: 0.28, range: 420, price: 250, ammoPrice: 50, ammoPack: 12 },
+};
+export const SHOP_PRICES = { spray: 150, repair: 100 };
+
+// The eight stash chests hidden around Palmetto Bay.
+export const STASH_CHESTS = [
+  { x: 420, y: 420, cash: 250 },
+  { x: 3180, y: 420, cash: 300 },
+  { x: 420, y: 1980, cash: 250 },
+  { x: 2380, y: 820, cash: 400 },
+  { x: 820, y: 1620, cash: 300 },
+  { x: 3180, y: 1980, cash: 350 },
+  { x: 1620, y: 2200, cash: 500 },
+  { x: 2820, y: 2380, cash: 450 },
 ];
 
-export const PLAYER = {
-  radius: 13,
-  walk: 175,
-  run: 300,
-  health: 100,
-  armor: 100,
-  punchDamage: 12,
-  punchRange: 42,
-  punchCooldown: 0.38,
+// Landmarks: name, position, what the mission system and the map call them.
+export const LANDMARKS = {
+  delgadoOffice: { name: "Delgado's Office", x: 1000, y: 600 },
+  safehouse: { name: 'Rico Safehouse', x: 600, y: 1800 },
+  marina: { name: 'Palmetto Marina', x: 3000, y: 2350 },
+  chopShop: { name: 'Chop Shop', x: 3000, y: 1000 },
+  docks: { name: 'The Docks', x: 3400, y: 2200 },
+  bank: { name: 'Palmetto Bank', x: 1800, y: 1000 },
+  sprayShop: { name: "Pay 'n Spray", x: 2600, y: 1400 },
+  ammoShop: { name: 'Ammu-Nation', x: 1400, y: 1800 },
+  boardwalk: { name: 'Boardwalk', x: 1800, y: 2380 },
+  downtown: { name: 'Downtown', x: 1800, y: 1200 },
 };
 
-export const WEAPONS = {
-  fists: { name: 'Fists', damage: 12, rate: 0.38, range: 46, ammo: Infinity, price: 0, auto: false },
-  pistol: { name: 'Pistol', damage: 26, rate: 0.28, range: 420, ammo: 24, price: 250, auto: false },
-  smg: { name: 'SMG', damage: 14, rate: 0.09, range: 360, ammo: 90, price: 800, auto: true },
-  shotgun: { name: 'Shotgun', damage: 60, rate: 0.85, range: 260, ammo: 12, price: 1200, auto: false, pellets: 5, spread: 0.22 },
-};
-
-/** Car classes: distinct handling is the point — a sports car is not a truck. */
-export const CAR_MODELS = {
-  sedan: { name: 'Sedan', accel: 420, top: 620, reverse: 220, grip: 5.2, turn: 2.6, length: 64, width: 30, colors: ['#c94f4f', '#4f7ec9', '#c9c9c9', '#3f8f5f'] },
-  sports: { name: 'Comet GT', accel: 640, top: 880, reverse: 260, grip: 6.4, turn: 3.1, length: 62, width: 29, colors: ['#f2b705', '#e83e8c', '#1f6feb', '#f5f5f5'] },
-  taxi: { name: 'Taxi', accel: 430, top: 640, reverse: 220, grip: 5.2, turn: 2.6, length: 64, width: 30, colors: ['#f2c200'] },
-  truck: { name: 'Truck', accel: 300, top: 480, reverse: 180, grip: 4.2, turn: 2.0, length: 84, width: 34, colors: ['#8a6d4b', '#5b7a8c', '#6b6b6b'] },
-  cop: { name: 'Interceptor', accel: 560, top: 780, reverse: 240, grip: 6.0, turn: 3.0, length: 64, width: 30, colors: ['#14181f'] },
-  gold: { name: 'Aurum GT', accel: 700, top: 940, reverse: 280, grip: 6.8, turn: 3.3, length: 62, width: 29, colors: ['#ffd700'] },
-};
-
-export const WANTED = {
-  maxStars: 5,
-  decaySeconds: 14,
-  copCarCap: [0, 1, 2, 3, 4, 5],
-  footCopCap: [0, 1, 2, 3, 4, 6],
-  roadblockStars: 3,
-  bustRadius: 46,
-  stealHeat: 1,
-  shootHeat: 2,
-  killCopHeat: 2,
-};
-
-export const SHOPS = {
-  spray: { name: "Pay 'n Spray", price: 150, x: 2920, y: 2420 },
-  guns: { name: 'Ammu-Nation', price: 0, x: 920, y: 1620 },
-};
-
-export const MISSION_REWARDS = [300, 600, 900, 500, 1200, 2500];
-
-export const PALETTE = {
-  ground: '#3d3348',
-  grass: '#2e4a33',
-  sand: '#b98d5e',
-  waterDeep: '#12283e',
-  waterShallow: '#1d4a5e',
-  road: '#262633',
-  roadEdge: '#3a3a4a',
-  sidewalk: '#4b4258',
-  line: '#c9a227',
-  buildingRoof: ['#6b4a5e', '#7a5a3a', '#4a5a6b', '#5e4a6b', '#8a6a4a', '#3f4a5e'],
-  buildingWall: ['#8a6a7a', '#a08a6a', '#6a7a8a', '#7a5a7a', '#b08a5a', '#5a6a7a'],
-  windowLit: '#ffd27a',
-  windowDark: '#2a2438',
-  neon: ['#ff2e88', '#00e5ff', '#ffd700', '#7CFC00', '#ff7b00'],
-  text: '#f5efe6',
-  muted: '#b8aebf',
-  gold: '#f2c94c',
-  red: '#e5534b',
-  blue: '#4fc3f7',
-  copBlue: '#3b82f6',
-  copRed: '#ef4444',
-  panel: 'rgba(16, 12, 24, 0.88)',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-export const SAVE_SLOT = 'palmetto-bay-save-v1';
-export const DUSK_HOUR = 19;
-export const DUSK_MINUTE = 42;
+// Six story missions. A step is one objective: goto (reach a marker),
+// steal (take a named car), shoot (drop N enemies), collect (grab N
+// packages), escape (drop the wanted level), deliver (reach a marker in a
+// car). Reward is paid on completion; failTimer seconds end the mission.
+export const MISSIONS = [
+  {
+    id: 1, title: 'Welcome Back', reward: 200,
+    briefing: 'Rico is back in Palmetto Bay. Delgado wants a word at his office — drive over and hear him out.',
+    steps: [{ type: 'goto', x: 1000, y: 600, label: "Reach Delgado's Office" }],
+  },
+  {
+    id: 2, title: 'Hot Wheels', reward: 500,
+    briefing: 'A gold Aurum GT is parked at the marina. Steal it and bring it to the chop shop — no questions asked.',
+    steps: [
+      { type: 'steal', x: 3000, y: 2350, label: 'Steal the gold Aurum GT' },
+      { type: 'deliver', x: 3000, y: 1000, label: 'Deliver it to the Chop Shop' },
+    ],
+  },
+  {
+    id: 3, title: 'Payback', reward: 600,
+    briefing: 'The Dock Rats jumped Rico last night. Settle it at the docks — drop four of them and get out.',
+    steps: [{ type: 'shoot', count: 4, x: 3400, y: 2200, label: 'Drop 4 Dock Rats at the docks' }],
+  },
+  {
+    id: 4, title: 'The Drop', reward: 700,
+    briefing: 'Three packages are stashed around the city. Collect them all before the timer runs out.',
+    steps: [
+      { type: 'collect', count: 3, label: 'Collect 3 packages' },
+      { type: 'goto', x: 600, y: 1800, label: 'Bring them to the Safehouse' },
+    ],
+    failTimer: 150,
+  },
+  {
+    id: 5, title: 'Heat Wave', reward: 800,
+    briefing: 'The cops are all over Rico after the drop. Lose the heat, then get the car to Pay \'n Spray.',
+    steps: [
+      { type: 'escape', label: 'Lose the wanted level' },
+      { type: 'goto', x: 2600, y: 1400, label: "Reach Pay 'n Spray" },
+    ],
+  },
+  {
+    id: 6, title: 'The Big Score', reward: 2000,
+    briefing: 'The Palmetto Bank vault. Grab the cash, dodge the law, and bring it home to the safehouse.',
+    steps: [
+      { type: 'goto', x: 1800, y: 1000, label: 'Reach Palmetto Bank' },
+      { type: 'collect', count: 1, label: 'Grab the vault cash' },
+      { type: 'deliver', x: 600, y: 1800, label: 'Escape to the Safehouse' },
+    ],
+  },
+];
